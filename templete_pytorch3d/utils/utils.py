@@ -79,9 +79,9 @@ def save_image_w_norm( img_tsr, save_img_paths ):
     return
 
 #====================================================
-# 3D plot 関連
+# 3D 表示関連
 #====================================================
-def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5) ):
+def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30)  ):
     points = sample_points_from_meshes(mesh, n_sample)
     x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
     fig = plt.figure(figsize=fig_size)
@@ -91,8 +91,22 @@ def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5) ):
     ax.set_ylabel('z')
     ax.set_zlabel('y')
     ax.set_title(title)
-    ax.view_init(190, 30)
+    ax.view_init(view_points[0], view_points[1])
     plt.show()
+    return
+
+def save_plot3d_mesh( mesh, file_path, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30) ):
+    points = sample_points_from_meshes(mesh, n_sample)
+    x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
+    fig = plt.figure(figsize=fig_size)
+    ax = Axes3D(fig)
+    ax.scatter3D(x, z, -y)
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_zlabel('y')
+    ax.set_title(title)
+    ax.view_init(view_points[0], view_points[1])
+    plt.savefig( file_path, dpi = 200, bbox_inches = 'tight' )
     return
 
 #====================================================

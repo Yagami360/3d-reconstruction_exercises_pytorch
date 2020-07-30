@@ -31,7 +31,7 @@ from pytorch3d.loss import chamfer_distance, mesh_edge_loss, mesh_laplacian_smoo
 from data.dataset import TempleteDataset, TempleteDataLoader
 from models.networks import TempleteNetworks
 from utils.utils import save_checkpoint, load_checkpoint
-from utils.utils import board_add_image, board_add_images, save_image_w_norm, plot3d_mesh
+from utils.utils import board_add_image, board_add_images, save_image_w_norm, plot3d_mesh, save_plot3d_mesh
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -150,8 +150,8 @@ if __name__ == '__main__':
     #print( "mesh_s : ", mesh_s )
 
     # メッシュの描写
-    #plot3d_mesh( mesh_t, "target mesh" )
-    #plot3d_mesh( mesh_s, "source mesh" )
+    save_plot3d_mesh( mesh_t, os.path.join(args.results_dir, args.exper_name, "target_mesh.png" ), "target mesh" )
+    save_plot3d_mesh( mesh_s, os.path.join(args.results_dir, args.exper_name, "source_mesh.png" ), "source mesh" )
 
     #================================
     # モデルの構造を定義する。
@@ -169,7 +169,7 @@ if __name__ == '__main__':
     #================================
     # loss 関数の設定
     #================================
-    loss_fn = nn.L1Loss()
+    pass
 
     #================================
     # モデルの学習
@@ -222,7 +222,7 @@ if __name__ == '__main__':
             print( "step={}, loss_G={:.5f}, loss_chamfer={:.5f}, loss_edge={:.5f}, loss_normal={:.5f}, loss_laplacian={:.5f}".format(step, loss_G.item(), loss_chamfer.item(), loss_edge.item(), loss_normal.item(), loss_laplacian.item()) )
 
             # visual images
-            plot3d_mesh( mesh_s_new, "source mesh" )
+            save_plot3d_mesh( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
             """
             visuals = [
                 [ image, target, output ],
@@ -237,7 +237,15 @@ if __name__ == '__main__':
         # モデルの保存
         #====================================================
         if( epoch % args.n_save_epoches == 0 ):
-            print( "saved checkpoints" )
+            print( "saved mesh" )
+            # Fetch the verts and faces of the final predicted mesh
+            final_verts, final_faces = mesh_s_new.get_mesh_verts_faces(0)
+
+            # Scale normalize back to the original target size
+            final_verts = final_verts * scale + center
+
+            # Store the predicted mesh using save_obj
+            save_obj( os.path.join(os.path.join(args.save_checkpoints_dir), 'mesh_step{:.5f}.obj'.format(step)), final_verts, final_faces )
 
     print("Finished Training Loop.")
-    save_checkpoint( model_G, device, os.path.join(args.save_checkpoints_dir, args.exper_name, 'model_G_final.pth') )
+    save_obj( os.path.join(os.path.join(args.save_checkpoints_dir), 'mesh_final.obj'), final_verts, final_faces )
