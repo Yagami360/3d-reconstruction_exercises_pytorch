@@ -4,11 +4,16 @@ import numpy as np
 from PIL import Image
 import imageio
 import random
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 import torch
 import torch.nn as nn
 from torchvision.utils import save_image
 from tensorboardX import SummaryWriter
+
+import pytorch3d
+from pytorch3d.ops import sample_points_from_meshes
 
 #====================================================
 # モデルの保存＆読み込み関連
@@ -71,6 +76,23 @@ def save_image_w_norm( img_tsr, save_img_paths ):
         img_np = img_np.swapaxes(0, 1).swapaxes(1, 2)
 
     Image.fromarray(img_np).save(save_img_paths)
+    return
+
+#====================================================
+# 3D plot 関連
+#====================================================
+def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5) ):
+    points = sample_points_from_meshes(mesh, n_sample)
+    x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
+    fig = plt.figure(figsize=fig_size)
+    ax = Axes3D(fig)
+    ax.scatter3D(x, z, -y)
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_zlabel('y')
+    ax.set_title(title)
+    ax.view_init(190, 30)
+    plt.show()
     return
 
 #====================================================

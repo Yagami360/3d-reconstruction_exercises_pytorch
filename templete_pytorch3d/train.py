@@ -20,14 +20,18 @@ from tensorboardX import SummaryWriter
 
 # PyTorch 3D
 import pytorch3d
-from pytorch3d import _C
+#from pytorch3d import _C
 from pytorch3d.io import load_obj, save_obj
+from pytorch3d.structures import Meshes
+from pytorch3d.utils import ico_sphere
+from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.loss import chamfer_distance, mesh_edge_loss, mesh_laplacian_smoothing, mesh_normal_consistency
 
 # 自作モジュール
 from data.dataset import TempleteDataset, TempleteDataLoader
 from models.networks import TempleteNetworks
 from utils.utils import save_checkpoint, load_checkpoint
-from utils.utils import board_add_image, board_add_images, save_image_w_norm
+from utils.utils import board_add_image, board_add_images, save_image_w_norm, plot3d_mesh
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -40,9 +44,7 @@ if __name__ == '__main__':
     parser.add_argument("--n_epoches", type=int, default=100, help="エポック数")    
     parser.add_argument('--batch_size', type=int, default=4, help="バッチサイズ")
     parser.add_argument('--batch_size_valid', type=int, default=1, help="バッチサイズ")
-    parser.add_argument('--image_height', type=int, default=128, help="入力画像の高さ（pixel単位）")
-    parser.add_argument('--image_width', type=int, default=128, help="入力画像の幅（pixel単位）")
-    parser.add_argument('--lr', type=float, default=0.007, help="学習率")
+    parser.add_argument('--lr', type=float, default=0.1, help="学習率")
     parser.add_argument('--beta1', type=float, default=0.5, help="学習率の減衰率")
     parser.add_argument('--beta2', type=float, default=0.999, help="学習率の減衰率")
     parser.add_argument("--n_diaplay_step", type=int, default=100,)
@@ -50,7 +52,12 @@ if __name__ == '__main__':
     parser.add_argument("--n_save_epoches", type=int, default=10,)
     parser.add_argument("--val_rate", type=float, default=0.01)
     parser.add_argument('--n_display_valid', type=int, default=8, help="valid データの tensorboard への表示数")
-    parser.add_argument('--data_augument', action='store_true')
+
+    parser.add_argument("--lambda_chamfer", type=float, default=1.0)
+    parser.add_argument("--lambda_edge", type=float, default=1.0)
+    parser.add_argument("--lambda_normal", type=float, default=0.01)
+    parser.add_argument("--lambda_laplacian", type=float, default=0.1)
+
     parser.add_argument("--seed", type=int, default=71)
     parser.add_argument('--device', choices=['cpu', 'gpu'], default="gpu", help="使用デバイス (CPU or GPU)")
     parser.add_argument('--n_workers', type=int, default=4, help="CPUの並列化数（0 で並列化なし）")
@@ -65,7 +72,7 @@ if __name__ == '__main__':
             print('%s: %s' % (str(key), str(value)))
 
         print( "pytorch version : ", torch.__version__)
-        print( "pytorch 3d version : ", p3d.__version__)
+        print( "pytorch 3d version : ", pytorch3d.__version__)
 
     # 出力フォルダの作成
     if not os.path.isdir(args.results_dir):
@@ -116,43 +123,48 @@ if __name__ == '__main__':
     #================================
     # データセットの読み込み
     #================================    
-    # メッシュファイルの読み込み / 頂点と面とauxの取得
+    # メッシュファイルの読み込み / 頂点 vertexs と面 faces と aux の取得
+    # verts : verts is a FloatTensor of shape (V, 3) where V is the number of vertices in the mesh
+    # faces : faces is an object which contains the following LongTensors: verts_idx, normals_idx and textures_idx
     verts, faces, aux = load_obj( os.path.join( args.dataset_dir, "mesh", 'dolphin.obj' ) )
-    print( "verts : ", verts )
-    print( "faces : ", faces )
-    print( "aux : ", aux )
+    verts = verts.to(device)
+    #print( "verts : ", verts )      # tensor([[-0.0374,  0.4473,  0.1219], [ 0.0377,  0.4471,  0.1220], ...
+    #print( "faces : ", faces )          # Faces(verts_idx=tensor([[   0,  646,  643], ... , materials_idx=tensor([-1, -1, -1,  ..., -1, -1, -1]))
+    #print( "aux : ", aux )              # Properties(normals=None, verts_uvs=None, material_colors=None, texture_images=None, texture_atlas=None)
+    #print( "verts.shape : ", verts.shape )  # torch.Size([2562, 3]) / [頂点数, xyz座標]
 
+    faces_idx = faces.verts_idx.to(device)
+    #print( "faces_idx : ", faces_idx )             # tensor([[   0,  646,  643], [   0,  643,  642], ...
+    #print( "faces_idx.shape : ", faces_idx.shape )  # torch.Size([5120, 3]) / 
 
-    # 学習用データセットとテスト用データセットの設定
-    ds_train = TempleteDataset( args, args.dataset_dir, datamode = "train", image_height = args.image_height, image_width = args.image_width, data_augument = args.data_augument, debug = args.debug )
+    # (0,0,0)を中心とする半径1の球にフィットするように正規化・中心化
+    center = verts.mean(0)
+    verts = verts - center
+    scale = max(verts.abs().max(0)[0])
+    verts = verts / scale
 
-    # 学習用データセットとテスト用データセットの設定
-    index = np.arange(len(ds_train))
-    train_index, valid_index = train_test_split( index, test_size=args.val_rate, random_state=args.seed )
-    if( args.debug ):
-        print( "train_index.shape : ", train_index.shape )
-        print( "valid_index.shape : ", valid_index.shape )
-        print( "train_index[0:10] : ", train_index[0:10] )
-        print( "valid_index[0:10] : ", valid_index[0:10] )
+    # メッシュのオブジェクト生成
+    mesh_t = Meshes(verts=[verts], faces=[faces_idx])
+    mesh_s = ico_sphere(4, device)
+    #print( "mesh_t : ", mesh_t )    # <pytorch3d.structures.meshes.Meshes
+    #print( "mesh_s : ", mesh_s )
 
-    dloader_train = torch.utils.data.DataLoader(Subset(ds_train, train_index), batch_size=args.batch_size, shuffle=True, num_workers = args.n_workers, pin_memory = True )
-    dloader_valid = torch.utils.data.DataLoader(Subset(ds_train, valid_index), batch_size=args.batch_size_valid, shuffle=False, num_workers = args.n_workers, pin_memory = True )
+    # メッシュの描写
+    #plot3d_mesh( mesh_t, "target mesh" )
+    #plot3d_mesh( mesh_s, "source mesh" )
 
     #================================
     # モデルの構造を定義する。
     #================================
-    model_G = TempleteNetworks().to(device)
-    if( args.debug ):
-        print( "model_G\n", model_G )
-
-    # モデルを読み込む
-    if not args.load_checkpoints_path == '' and os.path.exists(args.load_checkpoints_path):
-        load_checkpoint(model_G, device, args.load_checkpoints_path )
+    # 変換関数の形状は、src_meshの頂点数と同じ
+    # mesh_s.verts_packed() : mesh に含まれる頂点リストを取得
+    verts_deform = torch.full( mesh_s.verts_packed().shape, 0.0, device=device, requires_grad=True )
+    #print( "mesh_s.verts_packed().shape : ", mesh_s.verts_packed().shape )
         
     #================================
     # optimizer_G の設定
     #================================
-    optimizer_G = optim.Adam( params = model_G.parameters(), lr = args.lr, betas = (args.beta1,args.beta2) )
+    optimizer_G = optim.Adam( params = [verts_deform], lr = args.lr, betas = (args.beta1,args.beta2) )
 
     #================================
     # loss 関数の設定
@@ -161,114 +173,70 @@ if __name__ == '__main__':
 
     #================================
     # モデルの学習
-    #================================    
+    #================================ 
     print("Starting Training Loop...")
     n_print = 1
     step = 0
     for epoch in tqdm( range(args.n_epoches), desc = "epoches" ):
-        for iter, inputs in enumerate( tqdm( dloader_train, desc = "epoch={}".format(epoch) ) ):
-            model_G.train()
+        #----------------------------------------------------
+        # 生成器 の forword 処理
+        #----------------------------------------------------
+        # メッシュの変形
+        mesh_s_new = mesh_s.offset_verts(verts_deform)
 
-            # 一番最後のミニバッチループで、バッチサイズに満たない場合は無視する（後の計算で、shape の不一致をおこすため）
-            if inputs["image"].shape[0] != args.batch_size:
-                break
+        # 各メッシュの表面から5000個の点をサンプリング
+        sample_t = sample_points_from_meshes(mesh_t, 5000)
+        sample_s = sample_points_from_meshes(mesh_s_new, 5000)
 
-            # ミニバッチデータを GPU へ転送
-            image = inputs["image"].to(device)
-            target = inputs["target"].to(device)
-            if( args.debug and n_print > 0):
-                print( "image.shape : ", image.shape )
-                print( "target.shape : ", target.shape )
-                print( "target.dtype : ", target.dtype )
-                print( "torch.min(target)={}, torch.max(target)={} ".format(torch.min(target), torch.max(target) ) )
+        #----------------------------------------------------
+        # 生成器の更新処理
+        #----------------------------------------------------
+        # 損失関数を計算する
+        loss_chamfer, _ = chamfer_distance(sample_t, sample_s)
+        loss_edge = mesh_edge_loss(mesh_s_new)
+        loss_normal = mesh_normal_consistency(mesh_s_new)
+        loss_laplacian = mesh_laplacian_smoothing(mesh_s_new, method="uniform")
+        loss_G = args.lambda_chamfer * loss_chamfer + args.lambda_edge * loss_edge + args.lambda_normal * loss_normal + args.lambda_laplacian * loss_laplacian
 
-            #----------------------------------------------------
-            # 生成器 の forword 処理
-            #----------------------------------------------------
-            output = model_G( image )
-            if( args.debug and n_print > 0 ):
-                print( "output.shape : ", output.shape )
+        # ネットワークの更新処理
+        optimizer_G.zero_grad()
+        loss_G.backward()
+        optimizer_G.step()
 
-            #----------------------------------------------------
-            # 生成器の更新処理
-            #----------------------------------------------------
-            # 損失関数を計算する
-            #loss_G = loss_fn( output, target )
-            loss_G = torch.zeros(1, requires_grad=True).float().to(device)
+        #====================================================
+        # 学習過程の表示
+        #====================================================
+        if( step == 0 or ( step % args.n_diaplay_step == 0 ) ):
+            # lr
+            for param_group in optimizer_G.param_groups:
+                lr = param_group['lr']
 
-            # ネットワークの更新処理
-            optimizer_G.zero_grad()
-            loss_G.backward()
-            optimizer_G.step()
+            board_train.add_scalar('lr/learning rate', lr, step )
 
-            #====================================================
-            # 学習過程の表示
-            #====================================================
-            if( step == 0 or ( step % args.n_diaplay_step == 0 ) ):
-                # lr
-                for param_group in optimizer_G.param_groups:
-                    lr = param_group['lr']
+            # loss
+            board_train.add_scalar('G/loss_G', loss_G.item(), step)
+            board_train.add_scalar('G/loss_chamfer', loss_chamfer.item(), step)
+            board_train.add_scalar('G/loss_edge', loss_edge.item(), step)
+            board_train.add_scalar('G/loss_normal', loss_normal.item(), step)
+            board_train.add_scalar('G/loss_laplacian', loss_laplacian.item(), step)
+            print( "step={}, loss_G={:.5f}, loss_chamfer={:.5f}, loss_edge={:.5f}, loss_normal={:.5f}, loss_laplacian={:.5f}".format(step, loss_G.item(), loss_chamfer.item(), loss_edge.item(), loss_normal.item(), loss_laplacian.item()) )
 
-                board_train.add_scalar('lr/learning rate', lr, step )
+            # visual images
+            plot3d_mesh( mesh_s_new, "source mesh" )
+            """
+            visuals = [
+                [ image, target, output ],
+            ]
+            board_add_images(board_train, 'train', visuals, step+1)
+            """
 
-                # loss
-                board_train.add_scalar('G/loss_G', loss_G.item(), step)
-                print( "step={}, loss_G={:.5f}".format(step, loss_G.item()) )
-
-                # visual images
-                visuals = [
-                    [ image, target, output ],
-                ]
-                board_add_images(board_train, 'train', visuals, step+1)
-
-            #====================================================
-            # valid データでの処理
-            #====================================================
-            if( step != 0 and ( step % args.n_display_valid_step == 0 ) ):
-                loss_G_total = 0
-                n_valid_loop = 0
-                for iter, inputs in enumerate( tqdm(dloader_valid, desc = "valid") ):
-                    model_G.eval()            
-
-                    # 一番最後のミニバッチループで、バッチサイズに満たない場合は無視する（後の計算で、shape の不一致をおこすため）
-                    if inputs["image"].shape[0] != args.batch_size_valid:
-                        break
-
-                    # ミニバッチデータを GPU へ転送
-                    image = inputs["image"].to(device)
-                    target = inputs["target"].to(device)
-
-                    # 推論処理
-                    with torch.no_grad():
-                        output = model_G( image )
-
-                    # 損失関数を計算する
-                    #loss_G = loss_fn( output, target )
-                    loss_G = torch.zeros(1, requires_grad=True).float().to(device)
-                    loss_G_total += loss_G
-
-                    # 生成画像表示
-                    if( iter <= args.n_display_valid ):
-                        # visual images
-                        visuals = [
-                            [ image, target, output ],
-                        ]
-                        board_add_images(board_valid, 'valid/{}'.format(iter), visuals, step+1)
-
-                    n_valid_loop += 1
-
-                # loss 値表示
-                board_valid.add_scalar('G/loss_G', loss_G_total.item()/n_valid_loop, step)
-                
-            step += 1
-            n_print -= 1
+        step += 1
+        n_print -= 1
 
         #====================================================
         # モデルの保存
         #====================================================
         if( epoch % args.n_save_epoches == 0 ):
-            save_checkpoint( model_G, device, os.path.join(args.save_checkpoints_dir, args.exper_name, 'model_G_ep%03d.pth' % (epoch)) )
-            save_checkpoint( model_G, device, os.path.join(args.save_checkpoints_dir, args.exper_name, 'model_G_final.pth') )
             print( "saved checkpoints" )
 
     print("Finished Training Loop.")
