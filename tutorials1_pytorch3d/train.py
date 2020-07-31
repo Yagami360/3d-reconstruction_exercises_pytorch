@@ -38,16 +38,11 @@ if __name__ == '__main__':
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
     parser.add_argument('--tensorboard_dir', type=str, default="tensorboard", help="TensorBoard のディレクトリ")
     parser.add_argument("--n_epoches", type=int, default=100, help="エポック数")    
-    parser.add_argument('--batch_size', type=int, default=4, help="バッチサイズ")
-    parser.add_argument('--batch_size_valid', type=int, default=1, help="バッチサイズ")
     parser.add_argument('--lr', type=float, default=0.1, help="学習率")
     parser.add_argument('--beta1', type=float, default=0.5, help="学習率の減衰率")
     parser.add_argument('--beta2', type=float, default=0.999, help="学習率の減衰率")
     parser.add_argument("--n_diaplay_step", type=int, default=100,)
-    parser.add_argument('--n_display_valid_step', type=int, default=500, help="valid データの tensorboard への表示間隔")
     parser.add_argument("--n_save_epoches", type=int, default=10,)
-    parser.add_argument("--val_rate", type=float, default=0.01)
-    parser.add_argument('--n_display_valid', type=int, default=8, help="valid データの tensorboard への表示数")
 
     parser.add_argument("--lambda_chamfer", type=float, default=1.0)
     parser.add_argument("--lambda_edge", type=float, default=1.0)
@@ -218,9 +213,9 @@ if __name__ == '__main__':
 
             # visual images
             save_plot3d_mesh_img( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
-            mesh_s_img = get_plot3d_mesh_img( mesh_s, os.path.join(args.results_dir, args.exper_name, "source_mesh.png" ), "source mesh" )
-            mesh_t_img = get_plot3d_mesh_img( mesh_t, os.path.join(args.results_dir, args.exper_name, "target_mesh.png" ), "target mesh" )
-            mesh_s_new_img = get_plot3d_mesh_img( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
+            mesh_s_img = get_plot3d_mesh_img( mesh_s, "source mesh" )
+            mesh_t_img = get_plot3d_mesh_img( mesh_t, "target mesh" )
+            mesh_s_new_img = get_plot3d_mesh_img( mesh_s_new, "source mesh" )
 
             mesh_s_tsr = torchvision.transforms.functional.to_tensor(mesh_s_img).unsqueeze(0)
             mesh_s_new_tsr = torchvision.transforms.functional.to_tensor(mesh_s_new_img).unsqueeze(0)
