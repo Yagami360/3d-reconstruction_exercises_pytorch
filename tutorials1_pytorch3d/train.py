@@ -5,9 +5,6 @@ import random
 from tqdm import tqdm
 from PIL import Image
 
-# sklearn
-from sklearn.model_selection import train_test_split
-
 # PyTorch
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -16,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from torchvision.utils import save_image
+import torchvision.transforms as transforms
 from tensorboardX import SummaryWriter
 
 # PyTorch 3D
@@ -28,15 +26,13 @@ from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.loss import chamfer_distance, mesh_edge_loss, mesh_laplacian_smoothing, mesh_normal_consistency
 
 # 自作モジュール
-from data.dataset import TempleteDataset, TempleteDataLoader
-from models.networks import TempleteNetworks
 from utils.utils import save_checkpoint, load_checkpoint
-from utils.utils import board_add_image, board_add_images, save_image_w_norm, plot3d_mesh, save_plot3d_mesh
+from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="debug", help="実験名")
-    parser.add_argument("--dataset_dir", type=str, default="dataset/templete_dataset")
+    parser.add_argument("--dataset_dir", type=str, default="dataset")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
@@ -118,7 +114,6 @@ if __name__ == '__main__':
 
     # tensorboard 出力
     board_train = SummaryWriter( log_dir = os.path.join(args.tensorboard_dir, args.exper_name) )
-    board_valid = SummaryWriter( log_dir = os.path.join(args.tensorboard_dir, args.exper_name + "_valid") )
 
     #================================
     # データセットの読み込み
@@ -126,7 +121,7 @@ if __name__ == '__main__':
     # メッシュファイルの読み込み / 頂点 vertexs と面 faces と aux の取得
     # verts : verts is a FloatTensor of shape (V, 3) where V is the number of vertices in the mesh
     # faces : faces is an object which contains the following LongTensors: verts_idx, normals_idx and textures_idx
-    verts, faces, aux = load_obj( os.path.join( args.dataset_dir, "mesh", 'dolphin.obj' ) )
+    verts, faces, aux = load_obj( os.path.join( args.dataset_dir, 'dolphin.obj' ) )
     verts = verts.to(device)
     #print( "verts : ", verts )      # tensor([[-0.0374,  0.4473,  0.1219], [ 0.0377,  0.4471,  0.1220], ...
     #print( "faces : ", faces )          # Faces(verts_idx=tensor([[   0,  646,  643], ... , materials_idx=tensor([-1, -1, -1,  ..., -1, -1, -1]))
@@ -150,8 +145,8 @@ if __name__ == '__main__':
     #print( "mesh_s : ", mesh_s )
 
     # メッシュの描写
-    save_plot3d_mesh( mesh_t, os.path.join(args.results_dir, args.exper_name, "target_mesh.png" ), "target mesh" )
-    save_plot3d_mesh( mesh_s, os.path.join(args.results_dir, args.exper_name, "source_mesh.png" ), "source mesh" )
+    save_plot3d_mesh_img( mesh_t, os.path.join(args.results_dir, args.exper_name, "target_mesh.png" ), "target mesh" )
+    save_plot3d_mesh_img( mesh_s, os.path.join(args.results_dir, args.exper_name, "source_mesh.png" ), "source mesh" )
 
     #================================
     # モデルの構造を定義する。
@@ -179,7 +174,7 @@ if __name__ == '__main__':
     step = 0
     for epoch in tqdm( range(args.n_epoches), desc = "epoches" ):
         #----------------------------------------------------
-        # 生成器 の forword 処理
+        # モデルの forword 処理
         #----------------------------------------------------
         # メッシュの変形
         mesh_s_new = mesh_s.offset_verts(verts_deform)
@@ -189,7 +184,7 @@ if __name__ == '__main__':
         sample_s = sample_points_from_meshes(mesh_s_new, 5000)
 
         #----------------------------------------------------
-        # 生成器の更新処理
+        # モデルの更新処理
         #----------------------------------------------------
         # 損失関数を計算する
         loss_chamfer, _ = chamfer_distance(sample_t, sample_s)
@@ -222,13 +217,18 @@ if __name__ == '__main__':
             print( "step={}, loss_G={:.5f}, loss_chamfer={:.5f}, loss_edge={:.5f}, loss_normal={:.5f}, loss_laplacian={:.5f}".format(step, loss_G.item(), loss_chamfer.item(), loss_edge.item(), loss_normal.item(), loss_laplacian.item()) )
 
             # visual images
-            save_plot3d_mesh( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
-            """
+            save_plot3d_mesh_img( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
+            mesh_s_img = get_plot3d_mesh_img( mesh_s, os.path.join(args.results_dir, args.exper_name, "source_mesh.png" ), "source mesh" )
+            mesh_t_img = get_plot3d_mesh_img( mesh_t, os.path.join(args.results_dir, args.exper_name, "target_mesh.png" ), "target mesh" )
+            mesh_s_new_img = get_plot3d_mesh_img( mesh_s_new, os.path.join(args.results_dir, args.exper_name, "source_mesh_step{}.png".format(step) ), "source mesh" )
+
+            mesh_s_tsr = torchvision.transforms.functional.to_tensor(mesh_s_img).unsqueeze(0)
+            mesh_s_new_tsr = torchvision.transforms.functional.to_tensor(mesh_s_new_img).unsqueeze(0)
+            mesh_t_tsr = torchvision.transforms.functional.to_tensor(mesh_t_img).unsqueeze(0)
             visuals = [
-                [ image, target, output ],
+                [ mesh_s_tsr, mesh_t_tsr, mesh_s_new_tsr ],
             ]
             board_add_images(board_train, 'train', visuals, step+1)
-            """
 
         step += 1
         n_print -= 1
@@ -245,7 +245,7 @@ if __name__ == '__main__':
             final_verts = final_verts * scale + center
 
             # Store the predicted mesh using save_obj
-            save_obj( os.path.join(os.path.join(args.save_checkpoints_dir), 'mesh_step{:.5f}.obj'.format(step)), final_verts, final_faces )
+            save_obj( os.path.join(os.path.join(args.save_checkpoints_dir), 'mesh_step{:0>5}.obj'.format(step-1)), final_verts, final_faces )
 
     print("Finished Training Loop.")
     save_obj( os.path.join(os.path.join(args.save_checkpoints_dir), 'mesh_final.obj'), final_verts, final_faces )

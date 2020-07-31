@@ -1,7 +1,9 @@
 # -*- coding:utf-8 -*-
 import os
 import numpy as np
+import io
 from PIL import Image
+import cv2
 import imageio
 import random
 import matplotlib.pyplot as plt
@@ -81,7 +83,7 @@ def save_image_w_norm( img_tsr, save_img_paths ):
 #====================================================
 # 3D 表示関連
 #====================================================
-def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30)  ):
+def plot3d_mesh_img( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30)  ):
     points = sample_points_from_meshes(mesh, n_sample)
     x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
     fig = plt.figure(figsize=fig_size)
@@ -95,7 +97,7 @@ def plot3d_mesh( mesh, title = "plot mesh", n_sample = 500, fig_size = (5,5), vi
     plt.show()
     return
 
-def save_plot3d_mesh( mesh, file_path, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30) ):
+def save_plot3d_mesh_img( mesh, file_path, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30) ):
     points = sample_points_from_meshes(mesh, n_sample)
     x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
     fig = plt.figure(figsize=fig_size)
@@ -108,6 +110,28 @@ def save_plot3d_mesh( mesh, file_path, title = "plot mesh", n_sample = 500, fig_
     ax.view_init(view_points[0], view_points[1])
     plt.savefig( file_path, dpi = 200, bbox_inches = 'tight' )
     return
+
+def get_plot3d_mesh_img( mesh, file_path, title = "plot mesh", n_sample = 500, fig_size = (5,5), view_points = (190,30) ):
+    points = sample_points_from_meshes(mesh, n_sample)
+    x, y, z = points.clone().detach().cpu().squeeze().unbind(1)    
+    fig = plt.figure(figsize=fig_size)
+    ax = Axes3D(fig)
+    ax.scatter3D(x, z, -y)
+    ax.set_xlabel('x')
+    ax.set_ylabel('z')
+    ax.set_zlabel('y')
+    ax.set_title(title)
+    ax.view_init(view_points[0], view_points[1])
+
+    buffer = io.BytesIO()               # bufferを用意
+    plt.savefig(buffer, format='png')   # bufferに保持
+    buffer_np = np.frombuffer(buffer.getvalue(), dtype=np.uint8)    # bufferからの読み出し
+    buffer_cv = cv2.imdecode(buffer_np, 1)  # デコード
+    buffer_cv = buffer_cv[:,:,::-1]         # BGR->RGB
+    #print( "buffer_cv.shape : ", buffer_cv.shape )
+    img = Image.fromarray(buffer_cv)
+    #print( "img : ", img)
+    return img
 
 #====================================================
 # TensorBoard への出力関連
