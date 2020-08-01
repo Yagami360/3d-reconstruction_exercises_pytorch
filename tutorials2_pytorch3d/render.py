@@ -132,7 +132,7 @@ if __name__ == '__main__':
     #================================
     # レンダリングパイプラインの構成
     #================================
-    # ビュー変換行列の生成
+    # ビュー変換行列の作成
     rot_matrix, trans_matrix = look_at_view_transform( 
         dist = args.camera_dist,     # distance of the camera from the object
         elev = args.camera_elev,     # angle in degres or radians. This is the angle between the vector from the object to the camera, and the horizontal plane y = 0 (xz-plane).
@@ -141,12 +141,12 @@ if __name__ == '__main__':
     print( "rot_matrix.shape : ", rot_matrix.shape )    # tensor / torch.Size([1, 3, 3])
     print( "trans_matrix.shape : ", trans_matrix.shape )    # tensor / torch.Size([1, 3])
 
-    # カメラの生成
+    # カメラの作成
     # With world coordinates +Y up, +X left and +Z in, the front of the cow is facing the -Z direction. 
     # So we move the camera by 180 in the azimuth direction so it is facing the front of the cow. 
     cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
-    # ラスタライザーの生成
+    # ラスタライザーの作成
     # Define the settings for rasterization and shading. Here we set the output image to be of size 512x512.
     # As we are rendering images for visualization purposes only we will set faces_per_pixel=1 and blur_radius=0.0.
     # We also set bin_size and max_faces_per_bin to None which ensure that 
@@ -164,14 +164,21 @@ if __name__ == '__main__':
         )
     )
 
-    # ライトの生成
+    # ライトの作成
     lights = PointLights( device = device, location = [[args.light_pos_x, args.light_pos_y, args.light_pos_z]] )
 
-    # シェーダーの生成
-    # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
-    shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights )
+    # マテリアルの作成
+    materials = Materials(
+        device = device,
+        specular_color = [[0.0, 0.0, 0.0]],
+        shininess = 10.0
+    )
 
-    # レンダラーの生成
+    # シェーダーの作成
+    # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
+    shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
+
+    # レンダラーの作成
     # Create a phong renderer by composing a rasterizer and a shader.
     renderer = MeshRenderer( rasterizer = rasterizer, shader = shader )
 
@@ -189,6 +196,10 @@ if __name__ == '__main__':
     camera_dist = args.camera_dist
     camera_elev = args.camera_elev
     camera_azim = args.camera_azim
+    material_spec_r = 0.0
+    material_spec_g = 0.0
+    material_spec_b = 0.0
+    shininess = 10.0
     for step in tqdm( range(args.render_steps), desc="render"):
         #-----------------------------
         # ライトの移動＆再レンダリング
@@ -199,7 +210,7 @@ if __name__ == '__main__':
         new_lights.location = torch.tensor( [light_pos_x, light_pos_y, light_pos_z], device = device )[None]
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights )
+        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials )
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_light.png" ) )
 
         # visual images
@@ -218,7 +229,7 @@ if __name__ == '__main__':
         new_cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights )
+        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials )
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_camera.png" ) )
 
         # visual images
@@ -226,5 +237,29 @@ if __name__ == '__main__':
             [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
         ]
         board_add_images(board_train, 'render_camera', visuals, step+1)
+
+        #-----------------------------
+        # マテリアル変更＆再レンダリング
+        #-----------------------------
+        material_spec_r += 0.1
+        material_spec_g += 0.1
+        material_spec_b += 0.1
+        shininess += 1.0
+        new_materials = Materials(
+            device = device,
+            specular_color = [[material_spec_r, material_spec_g, material_spec_b]],
+            shininess = shininess
+        )
+
+        # メッシュのレンダリング
+        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = new_materials )
+        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_materials.png" ) )
+
+        # visual images
+        visuals = [
+            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+        ]
+        board_add_images(board_train, 'render_materials', visuals, step+1)
+
 
 
