@@ -20,12 +20,13 @@ from tensorboardX import SummaryWriter
 import pytorch3d
 #from pytorch3d import _C
 from pytorch3d.io import load_obj, save_obj, load_objs_as_meshes
-from pytorch3d.structures import Meshes
+from pytorch3d.structures import Meshes                                                 # メッシュ関連
+#from pytorch3d.structures import Textures                                               # テクスチャー関連
 from pytorch3d.renderer import look_at_view_transform, OpenGLPerspectiveCameras         # カメラ関連
 from pytorch3d.renderer import PointLights, DirectionalLights                           # ライト関連
 from pytorch3d.renderer import Materials                                                # マテリアル関連
 from pytorch3d.renderer import RasterizationSettings, MeshRasterizer                    # ラスタライザー関連
-from pytorch3d.renderer.mesh.shader import TexturedSoftPhongShader                      # シェーダー関連
+from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader, TexturedSoftPhongShader     # シェーダー関連
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
 # 自作モジュール
@@ -35,7 +36,7 @@ from utils.utils import board_add_image, board_add_images, save_image_w_norm, sa
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="render_mesh", help="実験名")
-    parser.add_argument("--dataset_dir", type=str, default="dataset/cow_mesh")
+    parser.add_argument("--mesh_file", type=str, default="dataset/cow_mesh/cow.obj")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
@@ -43,6 +44,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--render_steps", type=int, default=100)
     parser.add_argument("--window_size", type=int, default=512)
+    parser.add_argument('--shader', choices=['soft_silhouette_shader', 'soft_phong_shader', 'textured_soft_phong_shader'], default="textured_soft_phong_shader", help="shader の種類")
     parser.add_argument("--light_pos_x", type=float, default=0.0)
     parser.add_argument("--light_pos_y", type=float, default=0.0)
     parser.add_argument("--light_pos_z", type=float, default=-5.0)
@@ -115,19 +117,30 @@ if __name__ == '__main__':
     # データセットの読み込み
     #================================    
     # メッシュファイルの読み込み / メッシュ : pytorch3d.structures.meshes.Meshes 型
-    mesh = load_objs_as_meshes( [os.path.join(args.dataset_dir, 'cow.obj')], device = device )
-    print( "mesh : ", mesh )                    # <pytorch3d.structures.meshes.Meshes object at 0x13dc98da0>
+    mesh = load_objs_as_meshes( [args.mesh_file], device = device )
+    #print( "mesh : ", mesh )                    # <pytorch3d.structures.meshes.Meshes object at 0x13dc98da0>
+    print( "mesh.num_verts_per_mesh() : ", mesh.num_verts_per_mesh() )
 
     # メッシュの描写
     save_plot3d_mesh_img( mesh, os.path.join(args.results_dir, args.exper_name, "mesh.png" ), "mesh" )
 
     # メッシュのテクスチャー / テクスチャー : Tensor 型
-    texture = mesh.textures.maps_padded()
-    #print( "texture : ", texture )             # tensor([[[[1.0000, 0.9333, 0.9020], ...
-    print( "texture.shape : ", texture.shape )  # torch.Size([1, 1024, 1024, 3])
+    if( args.shader == "textured_soft_phong_shader" ):
+        texture = mesh.textures.maps_padded()
+        #print( "texture : ", texture )             # tensor([[[[1.0000, 0.9333, 0.9020], ...
+        print( "texture.shape : ", texture.shape )  # torch.Size([1, 1024, 1024, 3])
+        save_image( texture.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "texture.png" ) )
+    elif( args.shader == "soft_phong_shader" ):
+        from pytorch3d.structures import Textures
+        
+        # 頂点カラーを設定
+        verts_rgb_colors = torch.ones([1, mesh.num_verts_per_mesh().item(), 3]).to(device) * 0.9
 
-    # テクスチャーの描写
-    save_image( texture.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "texture.png" ) )
+        # 頂点カラーのテクスチャー生成
+        texture = Textures(verts_rgb=verts_rgb_colors)
+
+        # メッシュにテクスチャーを設定
+        mesh.textures = texture
 
     #================================
     # レンダリングパイプラインの構成
@@ -175,8 +188,15 @@ if __name__ == '__main__':
     )
 
     # シェーダーの作成
-    # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
-    shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
+    if( args.shader == "soft_silhouette_shader" ):
+        shader = SoftSilhouetteShader()
+    elif( args.shader == "soft_phong_shader" ):
+        shader = SoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
+    elif( args.shader == "textured_soft_phong_shader" ):
+        # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
+        shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
+    else:
+        NotImplementedError()
 
     # レンダラーの作成
     # Create a phong renderer by composing a rasterizer and a shader.
@@ -211,6 +231,10 @@ if __name__ == '__main__':
 
         # メッシュのレンダリング
         mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials )
+        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
+        if( args.debug and step == 0 ):
+            print( "min={}, max={}".format(torch.min(mesh_img_tsr), torch.max(mesh_img_tsr) ) )
+
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_light.png" ) )
 
         # visual images
@@ -230,6 +254,7 @@ if __name__ == '__main__':
 
         # メッシュのレンダリング
         mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials )
+        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_camera.png" ) )
 
         # visual images
@@ -253,6 +278,7 @@ if __name__ == '__main__':
 
         # メッシュのレンダリング
         mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = new_materials )
+        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_materials.png" ) )
 
         # visual images
