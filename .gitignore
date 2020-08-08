@@ -4,6 +4,7 @@
 *.code-workspace
 *.tfevents.*
 *.obj
+*.pkl
 .DS_Store
 
 .vscode/
@@ -14,5 +15,6 @@ _debug/
 /*/dataset/*
 /*/results/*
 
+/pytorch3d/*
 /templete_pytorch3d/dataset/*
 /templete_pytorch3d/results/*
