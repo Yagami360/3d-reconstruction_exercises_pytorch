@@ -134,7 +134,7 @@ def get_plot3d_mesh_img( mesh, title = "plot mesh", n_sample = 500, fig_size = (
     return img
 
 
-def save_obj( verts, faces, file_name, format = "pytorch_tensor" ):
+def save_mesh_obj( verts, faces, file_name, format = "pytorch_tensor" ):
     if( format == "pytorch_tensor" ):
         pytorch3d.io.save_obj( file_name, verts, faces )
     elif( format == "numpy" ):

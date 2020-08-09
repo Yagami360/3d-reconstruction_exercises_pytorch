@@ -32,12 +32,12 @@ from pytorch3d.renderer import MeshRenderer                                     
 # 自作モジュール
 from data.smpl import SMPLModel
 from utils.utils import save_checkpoint, load_checkpoint
-from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_obj
+from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="smpl_render", help="実験名")
-    parser.add_argument("--registration_path", type=str, default="datasets/models/basicmodel_m_lbs_10_207_0_v1.0.0.pkl")
+    parser.add_argument("--registration_path", type=str, default="datasets/registrations/basicmodel_m_lbs_10_207_0_v1.0.0.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
@@ -129,18 +129,16 @@ if __name__ == '__main__':
         print( "verts.shape={}, faces.shape={}, joints.shape={}".format(verts.shape, faces.shape, joints.shape) )
 
     # 頂点と面情報から Mesh 生成 / メッシュ : pytorch3d.structures.meshes.Meshes 型
-    mesh = Meshes(verts, faces)
+    mesh = Meshes(verts, faces).to(device)
     print( "mesh.num_verts_per_mesh() : ", mesh.num_verts_per_mesh() )
 
     # メッシュの描写
     save_plot3d_mesh_img( mesh, os.path.join(args.results_dir, args.exper_name, "mesh.png" ), "mesh" )
-    save_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh.obj" ) )
+    save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh.obj" ) )
 
     # メッシュのテクスチャー / テクスチャー : Tensor 型
     if( args.shader == "textured_soft_phong_shader" ):
         texture = mesh.textures.maps_padded()
-        #print( "texture : ", texture )             # tensor([[[[1.0000, 0.9333, 0.9020], ...
-        print( "texture.shape : ", texture.shape )  # torch.Size([1, 1024, 1024, 3])
         save_image( texture.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "texture.png" ) )
     elif( args.shader == "soft_phong_shader" ):
         from pytorch3d.structures import Textures
@@ -165,17 +163,9 @@ if __name__ == '__main__':
     )
 
     # カメラの作成
-    # With world coordinates +Y up, +X left and +Z in, the front of the cow is facing the -Z direction. 
-    # So we move the camera by 180 in the azimuth direction so it is facing the front of the cow. 
     cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
     # ラスタライザーの作成
-    # Define the settings for rasterization and shading. Here we set the output image to be of size 512x512.
-    # As we are rendering images for visualization purposes only we will set faces_per_pixel=1 and blur_radius=0.0.
-    # We also set bin_size and max_faces_per_bin to None which ensure that 
-    # the faster coarse-to-fine rasterization method is used.
-    # Refer to rasterize_meshes.py for explanations of these parameters. 
-    # Refer to docs/notes/renderer.md for an explanation of the difference between naive and coarse-to-fine rasterization. 
     rasterizer = MeshRasterizer(
         cameras = cameras, 
         raster_settings = RasterizationSettings(
@@ -203,13 +193,11 @@ if __name__ == '__main__':
     elif( args.shader == "soft_phong_shader" ):
         shader = SoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
     elif( args.shader == "textured_soft_phong_shader" ):
-        # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
         shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
     else:
         NotImplementedError()
 
     # レンダラーの作成
-    # Create a phong renderer by composing a rasterizer and a shader.
     renderer = MeshRenderer( rasterizer = rasterizer, shader = shader )
 
     #================================
@@ -253,7 +241,7 @@ if __name__ == '__main__':
         mesh_img_tsr = renderer( mesh, cameras = cameras, lights = lights, materials = materials )
         mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_beta.png" ) )
-        save_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_beta_step{}.obj".format(step) ) )
+        save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_beta_step{}.obj".format(step) ) )
 
         # visual images
         visuals = [
@@ -272,7 +260,7 @@ if __name__ == '__main__':
         mesh_img_tsr = renderer( mesh, cameras = cameras, lights = lights, materials = materials )
         mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_theta.png" ) )
-        save_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_theta_step{}.obj".format(step) ) )
+        save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_theta_step{}.obj".format(step) ) )
 
         # visual images
         visuals = [

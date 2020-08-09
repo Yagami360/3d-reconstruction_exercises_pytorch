@@ -6,14 +6,16 @@ mkdir -p _logs
 #----------------------
 # model
 #----------------------
-EXPER_NAME=debug
+EXPER_NAME=render_mesh
 rm -rf tensorboard/${EXPER_NAME}
 
 python render.py \
     --exper_name ${EXPER_NAME} \
-    --registration_path datasets/registrations/basicmodel_m_lbs_10_207_0_v1.0.0.pkl \
-    --shader soft_silhouette_shader \
+    --mesh_file dataset/cow_mesh/cow.obj \
+    --shader textured_soft_phong_shader \
     --debug
+
+#    --ffd_param_file dataset/ffd_params/parameters_test_ffd_iges.prm \
 
 if [ $1 = "poweroff" ] ; then
     sudo poweroff

@@ -16,5 +16,7 @@ _debug/
 /*/results/*
 
 /pytorch3d/*
+/PyGeM/*
 /templete_pytorch3d/dataset/*
 /templete_pytorch3d/results/*
+/smpl_g+/*

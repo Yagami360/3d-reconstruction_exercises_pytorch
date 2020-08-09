@@ -29,6 +29,11 @@ from pytorch3d.renderer import RasterizationSettings, MeshRasterizer            
 from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader, TexturedSoftPhongShader     # シェーダー関連
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
+# PyGeM
+import pygem
+from pygem import FFD
+#from pygem import FFDParameters
+
 # 自作モジュール
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
@@ -37,6 +42,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="render_mesh", help="実験名")
     parser.add_argument("--mesh_file", type=str, default="dataset/cow_mesh/cow.obj")
+    parser.add_argument("--ffd_param_file", type=str, default="")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
@@ -67,6 +73,7 @@ if __name__ == '__main__':
 
         print( "pytorch version : ", torch.__version__)
         print( "pytorch 3d version : ", pytorch3d.__version__)
+        print( "pygem version : ", pygem.__version__)
 
     # 出力フォルダの作成
     if not os.path.isdir(args.results_dir):
@@ -118,8 +125,9 @@ if __name__ == '__main__':
     #================================    
     # メッシュファイルの読み込み / メッシュ : pytorch3d.structures.meshes.Meshes 型
     mesh = load_objs_as_meshes( [args.mesh_file], device = device )
-    #print( "mesh : ", mesh )                    # <pytorch3d.structures.meshes.Meshes object at 0x13dc98da0>
-    print( "mesh.num_verts_per_mesh() : ", mesh.num_verts_per_mesh() )
+    if( args.debug ):
+        print( "mesh.num_verts_per_mesh() : ", mesh.num_verts_per_mesh() )
+        print( "mesh.faces_packed().shape : ", mesh.faces_packed().shape )
 
     # メッシュの描写
     save_plot3d_mesh_img( mesh, os.path.join(args.results_dir, args.exper_name, "mesh.png" ), "mesh" )
@@ -128,7 +136,6 @@ if __name__ == '__main__':
     # メッシュのテクスチャー / テクスチャー : Tensor 型
     if( args.shader == "textured_soft_phong_shader" ):
         texture = mesh.textures.maps_padded()
-        #print( "texture : ", texture )             # tensor([[[[1.0000, 0.9333, 0.9020], ...
         print( "texture.shape : ", texture.shape )  # torch.Size([1, 1024, 1024, 3])
         save_image( texture.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "texture.png" ) )
     elif( args.shader == "soft_phong_shader" ):
@@ -144,6 +151,65 @@ if __name__ == '__main__':
         mesh.textures = texture
 
     #================================
+    # PyGeM での FFD
+    #================================
+    # FFD 変形用パラメーターファイルの読み込み
+    if( args.ffd_param_file != "" ):
+        from pygem import FFDParameters
+        ffd_params = FFDParameters()
+        ffd_params.read_parameters(filename=args.ffd_param_file)
+
+    # FFD(n_control_points)
+    # n_control_points (list) : number of control points in the x, y, and z direction. Default is [2, 2, 2].
+    if( args.ffd_param_file == "" ):
+        ffd = FFD([2,2,2])
+    else:
+        ffd = FFD(ffd_params)
+
+    # FFD オブジェクトの内容
+    # conversion_unit = 1.0
+    # n_control_points = [2 2 2]
+    # box_length = [1. 1. 1.]
+    # rot_angle  = [0. 0. 0.]
+    # array_mu_x = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+    # array_mu_y = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+    # array_mu_z = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+    # デフォルト設定 : 格子の長さ1、原点 $(0, 0, 0)$、回転なし
+    if( args.debug ):
+        print( "ffd : \n", ffd )    # conversion_unit = 1.0, n_control_points, box_length, ...
+        print( "ffd.array_mu_x.shape : \n", ffd.array_mu_x.shape )
+        print( "ffd.array_mu_y.shape : \n", ffd.array_mu_y.shape )
+        print( "ffd.array_mu_z.shape : \n", ffd.array_mu_z.shape )
+
+    # 制御点の変位を制御するために、`array_mu_x`, `array_mu_y`, `array_mu_z` の値を変えれば良い
+    if( args.ffd_param_file == "" ):
+        ffd.array_mu_x[0, 1, 1] = 5
+        ffd.array_mu_x[1, 1, 1] = 5
+        ffd.array_mu_y[1, 1, 1] = 5
+        ffd.array_mu_z[1, 1, 1] = 0
+    if( args.debug ):
+        print( "ffd.control_points() : \n", ffd.control_points() )
+        print( "ffd.control_points().shape : \n", ffd.control_points().shape )  # (8, 3)
+
+    # __call__(src_pts) を呼び出すことで、指定された頂点の FFD 変形を実行
+    # src_pts (numpy.ndarray) : the array of dimensions (n_points, 3) containing the points to deform. The points have to be arranged by row.
+    mesh_verts_ffd = ffd( mesh.verts_packed().clone().cpu().numpy() )
+
+    # ffd.perform() でも実行可能
+    #ffd.perform()
+    #mesh_verts_ffd = ffd.modified_mesh_points
+    if( args.debug ):
+        #print( "mesh_verts_ffd : ", mesh_verts_ffd )    # [[ 0.348799  -0.334989  -0.0832331], ...
+        print( "mesh_verts_ffd.shape : ", mesh_verts_ffd.shape )
+
+    # FDD で変形した頂点からメッシュを再構成
+    mesh_ffd = Meshes( [torch.from_numpy(mesh_verts_ffd).float().to(device)], [mesh.faces_packed()] ).to(device)
+    if( args.shader == "textured_soft_phong_shader" ):
+        mesh_ffd.textures = mesh.textures
+
+    save_mesh_obj( mesh_ffd.verts_packed(), mesh_ffd.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_ffd.obj" ) )
+
+    #================================
     # レンダリングパイプラインの構成
     #================================
     # ビュー変換行列の作成
@@ -152,21 +218,11 @@ if __name__ == '__main__':
         elev = args.camera_elev,     # angle in degres or radians. This is the angle between the vector from the object to the camera, and the horizontal plane y = 0 (xz-plane).
         azim = args.camera_azim      # angle in degrees or radians. The vector from the object to the camera is projected onto a horizontal plane y = 0. azim is the angle between the projected vector and a reference vector at (1, 0, 0) on the reference plane (the horizontal plane).
     )
-    print( "rot_matrix.shape : ", rot_matrix.shape )    # tensor / torch.Size([1, 3, 3])
-    print( "trans_matrix.shape : ", trans_matrix.shape )    # tensor / torch.Size([1, 3])
 
     # カメラの作成
-    # With world coordinates +Y up, +X left and +Z in, the front of the cow is facing the -Z direction. 
-    # So we move the camera by 180 in the azimuth direction so it is facing the front of the cow. 
     cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
     # ラスタライザーの作成
-    # Define the settings for rasterization and shading. Here we set the output image to be of size 512x512.
-    # As we are rendering images for visualization purposes only we will set faces_per_pixel=1 and blur_radius=0.0.
-    # We also set bin_size and max_faces_per_bin to None which ensure that 
-    # the faster coarse-to-fine rasterization method is used.
-    # Refer to rasterize_meshes.py for explanations of these parameters. 
-    # Refer to docs/notes/renderer.md for an explanation of the difference between naive and coarse-to-fine rasterization. 
     rasterizer = MeshRasterizer(
         cameras = cameras, 
         raster_settings = RasterizationSettings(
@@ -184,7 +240,7 @@ if __name__ == '__main__':
     # マテリアルの作成
     materials = Materials(
         device = device,
-        specular_color = [[0.0, 0.0, 0.0]],
+        specular_color = [[0.2, 0.2, 0.2]],
         shininess = 10.0
     )
 
@@ -200,12 +256,7 @@ if __name__ == '__main__':
         NotImplementedError()
 
     # レンダラーの作成
-    # Create a phong renderer by composing a rasterizer and a shader.
     renderer = MeshRenderer( rasterizer = rasterizer, shader = shader )
-
-    # メッシュのレンダリング
-    #mesh_img_tsr = renderer(mesh, cameras = cameras, lights = lights)
-    #save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render.png" ) )
 
     #================================
     # レンダリングループ処理
@@ -217,10 +268,7 @@ if __name__ == '__main__':
     camera_dist = args.camera_dist
     camera_elev = args.camera_elev
     camera_azim = args.camera_azim
-    material_spec_r = 0.0
-    material_spec_g = 0.0
-    material_spec_b = 0.0
-    shininess = 10.0
+
     for step in tqdm( range(args.render_steps), desc="render"):
         #-----------------------------
         # ライトの移動＆再レンダリング
@@ -232,15 +280,18 @@ if __name__ == '__main__':
 
         # メッシュのレンダリング
         mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials )
+        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = cameras, lights = new_lights, materials = materials )
         mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
+        mesh_ffd_img_tsr = mesh_ffd_img_tsr * 2.0 - 1.0
         if( args.debug and step == 0 ):
             print( "min={}, max={}".format(torch.min(mesh_img_tsr), torch.max(mesh_img_tsr) ) )
 
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_light.png" ) )
+        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_light.png" ) )
+        save_image( mesh_ffd_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_ffd_light.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_img_tsr.transpose(1,3).transpose(2,3), mesh_ffd_img_tsr.transpose(1,3).transpose(2,3) ],
         ]
         board_add_images(board_train, 'render_light', visuals, step+1)
 
@@ -255,38 +306,15 @@ if __name__ == '__main__':
 
         # メッシュのレンダリング
         mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials )
+        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = new_cameras, lights = lights, materials = materials )
         mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_camera.png" ) )
+        mesh_ffd_img_tsr = mesh_ffd_img_tsr * 2.0 - 1.0
+        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_camera.png" ) )
+        save_image( mesh_ffd_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_ffd_camera.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_img_tsr.transpose(1,3).transpose(2,3), mesh_ffd_img_tsr.transpose(1,3).transpose(2,3) ],
         ]
         board_add_images(board_train, 'render_camera', visuals, step+1)
-
-        #-----------------------------
-        # マテリアル変更＆再レンダリング
-        #-----------------------------
-        material_spec_r += 0.1
-        material_spec_g += 0.1
-        material_spec_b += 0.1
-        shininess += 1.0
-        new_materials = Materials(
-            device = device,
-            specular_color = [[material_spec_r, material_spec_g, material_spec_b]],
-            shininess = shininess
-        )
-
-        # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = new_materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_materials.png" ) )
-
-        # visual images
-        visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
-        ]
-        board_add_images(board_train, 'render_materials', visuals, step+1)
-
-
 
