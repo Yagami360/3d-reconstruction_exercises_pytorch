@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument("--smpl_registration_path", type=str, default="datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl")
     parser.add_argument("--digital_wardrobe_registration_path", type=str, default="datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/registration.pkl")
     parser.add_argument("--digital_wardrobe_cloth_mesh_path", type=str, default="datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/TShirtNoCoat.obj")
+    parser.add_argument("--cloth_smpl_fts_path", type=str, default="datasets/assets/garment_fts.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
     parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
@@ -129,6 +130,7 @@ if __name__ == '__main__':
     smpl = SMPLMGNModel( 
         registration_path = args.smpl_registration_path, 
         digital_wardrobe_registration_path = args.digital_wardrobe_registration_path, 
+        cloth_smpl_fts_path = args.cloth_smpl_fts_path,
         batch_size = args.batch_size, device = device, debug = args.debug
     )
 
@@ -136,9 +138,10 @@ if __name__ == '__main__':
     betas_init = torch.zeros( (args.batch_size, 10), requires_grad=False).float().to(device)
     thetas_init = torch.zeros( (args.batch_size, 72), requires_grad=False).float().to(device)
     trans_init = torch.from_numpy(np.zeros((args.batch_size, 3))).float().requires_grad_(False).to(device)
-    verts_init, faces_init, joints_init = smpl( betas = betas_init, trans = trans_init )
-    mesh_body_init = Meshes(verts_init, faces_init)
+    verts_init, faces_init, joints_init = smpl( betas = betas_init, thetas = thetas_init, trans = trans_init )
+    mesh_body_init = Meshes(verts_init, faces_init).to(device)
     print( "mesh_body_init.num_verts_per_mesh() : ", mesh_body_init.num_verts_per_mesh() )
+    print( "mesh_body_init.num_faces_per_mesh() : ", mesh_body_init.num_faces_per_mesh() )
     if( args.shader == "soft_phong_shader" ):
         # メッシュのテクスチャー設定
         from pytorch3d.structures import Textures
@@ -152,8 +155,9 @@ if __name__ == '__main__':
     betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
     thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
     verts, faces, joints = smpl( betas, thetas )
-    mesh_body = Meshes(verts, faces)
+    mesh_body = Meshes(verts, faces).to(device)
     print( "mesh_body.num_verts_per_mesh() : ", mesh_body.num_verts_per_mesh() )
+    print( "mesh_body.num_faces_per_mesh() : ", mesh_body.num_faces_per_mesh() )
     if( args.shader == "soft_phong_shader" ):
         from pytorch3d.structures import Textures
         verts_rgb_colors = torch.ones([1, mesh_body_init.num_verts_per_mesh().item(), 3]).to(device) * 0.9   # 頂点カラーを設定
@@ -166,13 +170,21 @@ if __name__ == '__main__':
         print( "thetas : ", thetas )
         print( "verts.shape={}, faces.shape={}, joints.shape={}".format(verts.shape, faces.shape, joints.shape) )
 
-    # digital wardrobe にある服メッシュを読み込み
+    # digital wardrobe にある服テンプレートメッシュを読み込み
     mesh_cloth = load_objs_as_meshes( [args.digital_wardrobe_cloth_mesh_path], device = device )
     print( "mesh_cloth.num_verts_per_mesh() : ", mesh_cloth.num_verts_per_mesh() )
+    print( "mesh_cloth.num_faces_per_mesh() : ", mesh_cloth.num_faces_per_mesh() )
     save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth.obj" ) )
 
-    # 服メッシュを 制御パラメータ β,θ を変えた場合の人体メッシュ の形状に変形する
+    # 服テンプレートメッシュを 制御パラメータ β,θ を変えた場合の人体メッシュの形状に変形する / Re-target
     mesh_cloth = deform_mesh_by_closest_vertices( mesh_cloth, mesh_body_init, mesh_body )
+    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_deformed.obj" ) )
+
+    # 衣装テンプレートメッシュの対応する SMPL 体型メッシュへの頂点変形 D を論文中の (3) 式で計算し、服メッシュを変形する？ / Re-pose
+    pass
+
+    # Laplacian deformation による衣装テンプレートメッシュの変形
+    pass
 
     #================================
     # レンダリングパイプラインの構成

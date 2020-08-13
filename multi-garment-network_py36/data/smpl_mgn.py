@@ -13,22 +13,40 @@ from psbody.mesh import Mesh
 from data.smpl import SMPLModel
 
 class SMPLMGNModel(SMPLModel):
-    def __init__( self, registration_path, digital_wardrobe_registration_path, batch_size = 1, device = torch.device( "cpu" ), debug = False ):
+    def __init__( 
+        self,
+        registration_path,                      # SMPL 人体メッシュの registration file
+        digital_wardrobe_registration_path,     # digital_wardrobe にある betas, thetas を保管した registration file
+        cloth_smpl_fts_path,                    # SMPL 人体メッシュと服メッシュの一致する頂点番号を保管した registration file
+        cloth_type = "TShirtNoCoat",
+        batch_size = 1, 
+        device = torch.device("cpu"), debug = False
+    ):
         super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug)
         self.digital_wardrobe_registration_path = digital_wardrobe_registration_path
+        self.cloth_smpl_fts_path = cloth_smpl_fts_path
+        self.cloth_type = cloth_type
 
-        # registration の読み込み        
+        # digital_wardrobe にある betas, thetas を保管した registration file からデータを抽出
         with open(self.digital_wardrobe_registration_path, 'rb') as f:
-            # encoding='latin1' : python2 で書き込まれた pickle を python3 で読み込むときに必要 / 要 chumpy
             params = pickle.load(f, encoding='latin1')
             if( debug ):
                 print( "params.keys() :\n", params.keys() )     # dict_keys(['gender', 'trans', 'pose', 'betas'])
 
-        # registration からデータを抽出
         self.betas = torch.from_numpy(np.array(params['betas'])).float().requires_grad_(False).to(device)
         self.thetas = torch.from_numpy(np.array(params['pose'])).float().requires_grad_(False).to(device)
         self.trans = torch.from_numpy(np.array(params['trans'])).float().requires_grad_(False).to(device)
         self.gender = params['gender']
+
+        # SMPL 人体メッシュと服メッシュの一致する頂点番号を保管した registration file からデータを抽出
+        with open(self.cloth_smpl_fts_path, 'rb') as f:
+            vert_indices, fts = pickle.load(f, encoding='latin1')
+            if( debug ):
+                print( "vert_indices.keys() :\n", vert_indices.keys() )     # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
+                print( "fts.keys() :\n", fts.keys() )                       # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
+
+        self.vert_indices = torch.from_numpy(np.array(vert_indices[self.cloth_type])).int().requires_grad_(False).to(device)
+        self.fts = torch.from_numpy(np.array(fts[self.cloth_type])).int().requires_grad_(False).to(device)
         if( debug ):
             print( "self.betas.shape : ", self.betas.shape )
             print( "self.thetas.shape : ", self.thetas.shape )
@@ -37,6 +55,11 @@ class SMPLMGNModel(SMPLModel):
             #print( "self.thetas : ", self.thetas )
             #print( "self.trans : ", self.trans )
             print( "self.gender : ", self.gender )
+
+            print( "self.vert_indices.shape : ", self.vert_indices.shape )
+            print( "self.fts.shape : ", self.fts.shape )
+            #print( "self.vert_indices : ", self.vert_indices )
+            #print( "self.fts : ", self.fts )
 
         return
 
