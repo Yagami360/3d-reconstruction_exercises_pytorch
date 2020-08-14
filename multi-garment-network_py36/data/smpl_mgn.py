@@ -2,6 +2,7 @@
 import os
 import numpy as np
 import pickle
+import scipy.sparse as sp
 
 import torch
 import torch.nn as nn
@@ -9,8 +10,12 @@ import torch.nn as nn
 # mesh
 from psbody.mesh import Mesh
 
+# pytorch3d
+from pytorch3d.structures import Meshes
+
 # 自作モジュール
 from data.smpl import SMPLModel
+from utils.mesh import upsampling_mesh
 
 class SMPLMGNModel(SMPLModel):
     def __init__( 
@@ -22,10 +27,48 @@ class SMPLMGNModel(SMPLModel):
         batch_size = 1, 
         device = torch.device("cpu"), debug = False
     ):
-        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug)
+        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug = False)
         self.digital_wardrobe_registration_path = digital_wardrobe_registration_path
         self.cloth_smpl_fts_path = cloth_smpl_fts_path
         self.cloth_type = cloth_type
+
+        # メッシュを高解像度化したパラメーターを設定
+        #mesh = Meshes(self.v_template.unsqueeze(0), self.faces.reshape(1,self.faces.shape[0],self.faces.shape[1]))
+        #mesh = Meshes(self.v_template.unsqueeze(0), torch.from_numpy(self.faces).uint().requires_grad_(False).to(device).unsqueeze(0))
+                
+        hres_verts, hres_faces, mapping = upsampling_mesh(self.v_template.detach().cpu().numpy(), self.faces)
+        #print( "hres_verts.shape={}, hres_faces.shape={}  : ".format(hres_verts.shape, hres_faces.shape) )
+
+        self.v_template = torch.from_numpy(hres_verts).float().requires_grad_(False).to(device)
+        self.faces = hres_faces
+        self.weights = torch.from_numpy(
+            np.hstack([
+                np.expand_dims(
+                    np.mean(
+                        mapping.dot(np.repeat(np.expand_dims(self.weights.detach().cpu().numpy()[:, i], -1), 3)).reshape(-1, 3), axis=1),
+                    axis=-1)
+                for i in range(24)
+            ])
+        ).float().requires_grad_(False).to(device)
+
+        self.J_regressor = torch.from_numpy(
+            np.array(
+                sp.csr_matrix(
+                    ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, hres_verts.shape[0] )
+                ).todense()
+            )
+        ).float().requires_grad_(False).to(device)
+
+        self.joint_regressor = torch.from_numpy(
+            np.array(
+                sp.csr_matrix(
+                    ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, hres_verts.shape[0] )
+                ).todense()
+            )
+        ).float().requires_grad_(False).to(device)
+
+        self.posedirs = torch.from_numpy(mapping.dot(self.posedirs.detach().cpu().numpy().reshape((-1, 207))).reshape(-1, 3, 207)).float().requires_grad_(False).to(device)
+        self.shapedirs = torch.from_numpy(mapping.dot(self.shapedirs.detach().cpu().numpy().reshape((-1, self.shapedirs.shape[-1]))).reshape(-1, 3, self.shapedirs.shape[-1])).float().requires_grad_(False).to(device)
 
         # digital_wardrobe にある betas, thetas を保管した registration file からデータを抽出
         with open(self.digital_wardrobe_registration_path, 'rb') as f:
@@ -45,9 +88,19 @@ class SMPLMGNModel(SMPLModel):
                 print( "vert_indices.keys() :\n", vert_indices.keys() )     # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
                 print( "fts.keys() :\n", fts.keys() )                       # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
 
-        self.vert_indices = torch.from_numpy(np.array(vert_indices[self.cloth_type])).int().requires_grad_(False).to(device)
-        self.fts = torch.from_numpy(np.array(fts[self.cloth_type])).int().requires_grad_(False).to(device)
+        self.vert_indices = np.array(vert_indices[self.cloth_type])
+        self.fts = np.array(fts[self.cloth_type])
         if( debug ):
+            print( "self.registration_path : ", self.registration_path )            
+            print( "self.J_regressor.shape : ", self.J_regressor.shape )            # 
+            print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # 
+            print( "self.posedirs.shape : ", self.posedirs.shape )                  # 
+            print( "self.v_template.shape : ", self.v_template.shape )              # 
+            print( "self.weights.shape : ", self.weights.shape )                    # 
+            print( "self.shapedirs.shape : ", self.shapedirs.shape )                # 
+            print( "self.kintree_table.shape : ", self.kintree_table.shape )        # 
+            print( "self.faces.shape : ", self.faces.shape )                        # 
+
             print( "self.betas.shape : ", self.betas.shape )
             print( "self.thetas.shape : ", self.thetas.shape )
             print( "self.trans.shape : ", self.trans.shape )

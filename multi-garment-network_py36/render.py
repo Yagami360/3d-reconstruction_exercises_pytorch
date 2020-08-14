@@ -37,7 +37,7 @@ from data.smpl import SMPLModel
 from data.smpl_mgn import SMPLMGNModel
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
-from utils.mesh import deform_mesh_by_closest_vertices
+from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -178,10 +178,11 @@ if __name__ == '__main__':
 
     # 服テンプレートメッシュを 制御パラメータ β,θ を変えた場合の人体メッシュの形状に変形する / Re-target
     mesh_cloth = deform_mesh_by_closest_vertices( mesh_cloth, mesh_body_init, mesh_body )
-    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_deformed.obj" ) )
+    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_retarget.obj" ) )
 
     # 衣装テンプレートメッシュの対応する SMPL 体型メッシュへの頂点変形 D を論文中の (3) 式で計算し、服メッシュを変形する？ / Re-pose
-    pass
+    mesh_cloth = repose_mesh( mesh_cloth, smpl, smpl.vert_indices )
+    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_repose.obj" ) )
 
     # Laplacian deformation による衣装テンプレートメッシュの変形
     pass

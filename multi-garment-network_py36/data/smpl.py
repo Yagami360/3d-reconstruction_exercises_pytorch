@@ -2,6 +2,7 @@
 import os
 import numpy as np
 import pickle
+import scipy.sparse as sp
 
 import torch
 import torch.nn as nn
@@ -21,18 +22,42 @@ class SMPLModel(nn.Module):
                 print( "params.keys() :\n", params.keys() ) # dict_keys(['J_regressor_prior', 'f', 'J_regressor', 'kintree_table', 'J', 'weights_prior', 'weights', 'vert_sym_idxs', 'posedirs', 'pose_training_info', 'bs_style', 'v_template', 'shapedirs', 'bs_type'])
 
         # registration からデータを抽出
-        self.J_regressor = torch.from_numpy(np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
-        if 'joint_regressor' in params.keys():
-            self.joint_regressor = torch.from_numpy(np.array(params['joint_regressor'].T.todense())).float().requires_grad_(False).to(device)
-        else:
-            self.joint_regressor = torch.from_numpy( np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
-
         self.weights = torch.from_numpy(np.array(params['weights'])).float().requires_grad_(False).to(device)
         self.posedirs = torch.from_numpy(np.array(params['posedirs'])).float().requires_grad_(False).to(device)
         self.v_template = torch.from_numpy(np.array(params['v_template'])).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(np.array(params['shapedirs'])).float().requires_grad_(False).to(device)
         self.kintree_table = params['kintree_table']
         self.faces = np.array(params['f'])
+
+
+        self.J_reg_csr = params['J_regressor'].asformat('csr')
+        #self.J_regressor = torch.from_numpy(np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
+        self.J_regressor = torch.from_numpy(
+            np.array(
+                sp.csr_matrix(
+                    ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, self.v_template.shape[0] )
+                ).todense()
+            )
+        ).float().requires_grad_(False).to(device)
+
+        if 'joint_regressor' in params.keys():
+            self.joint_regressor = torch.from_numpy(np.array(params['joint_regressor'].T.todense())).float().requires_grad_(False).to(device)
+        else:
+            #self.joint_regressor = torch.from_numpy( np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
+            self.joint_regressor = torch.from_numpy(
+                np.array(
+                    sp.csr_matrix(
+                        ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, self.v_template.shape[0] )
+                    ).todense()
+                )
+            ).float().requires_grad_(False).to(device)
+
+        if 'bs_type' in params.keys():
+            self.bs_type = params['bs_type']
+        if 'bs_style' in params.keys():
+            self.bs_style = params['bs_style']
+        if 'J' in params.keys():
+            self.J = params['J']
 
         self.betas = torch.zeros( (self.batch_size, 10), requires_grad=False).float().to(device)
         self.thetas = torch.zeros( (self.batch_size, 72), requires_grad=False).float().to(device)
@@ -43,6 +68,7 @@ class SMPLModel(nn.Module):
             print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # torch.Size([24, 6890])
             print( "self.posedirs.shape : ", self.posedirs.shape )                  # torch.Size([24, 6890])
             print( "self.v_template.shape : ", self.v_template.shape )              # torch.Size([6890, 3])
+            print( "self.weights.shape : ", self.weights.shape )                    # 
             print( "self.shapedirs.shape : ", self.shapedirs.shape )                # torch.Size([6890, 3, 10])
             print( "self.kintree_table.shape : ", self.kintree_table.shape )        # (2, 24)
             print( "self.faces.shape : ", self.faces.shape )                        # (13776, 3)
