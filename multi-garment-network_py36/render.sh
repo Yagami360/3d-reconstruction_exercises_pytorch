@@ -15,9 +15,6 @@ python render.py \
     --shader soft_silhouette_shader \
     --debug
 
-
-#    --smpl_registration_path datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/registration.pkl \
-
 if [ $1 = "poweroff" ] ; then
     sudo poweroff
     sudo shutdown -h now

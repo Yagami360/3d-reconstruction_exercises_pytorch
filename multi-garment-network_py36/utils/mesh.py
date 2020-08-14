@@ -7,7 +7,12 @@ import cv2
 import imageio
 import random
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+
+import scipy.sparse as sp
+from scipy.sparse import vstack, csr_matrix
+from scipy.sparse.linalg import spsolve
+
+from sklearn.preprocessing import normalize
 
 import torch
 import torch.nn as nn
@@ -16,6 +21,10 @@ from tensorboardX import SummaryWriter
 
 # mesh
 from psbody.mesh import Mesh
+from psbody.mesh.search import AabbTree
+from psbody.mesh.geometry.tri_normals import TriNormals
+from psbody.mesh.geometry.vert_normals import VertNormals
+from psbody.mesh.topology.connectivity import get_vert_connectivity
 
 # opendr
 from opendr.topology import loop_subdivider
@@ -122,4 +131,98 @@ def repose_mesh( src_mesh, smpl, vert_indices, device = torch.device("cpu") ):
     else:
         NotImplementedError()
 
+    return new_mesh
+
+
+def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None ):
+    """
+    Laplacian deformation による衣装テンプレートメッシュの変形？
+    [args]
+        mesh : 衣装メッシュ
+        base_mesh : SMPL人体メッシュ
+    """
+    def calc_laplacian(mesh):
+        """
+        メッシュに対して Laplacian deformation での Laplacian を計算する
+        """
+        # pytorch3d -> psbody.mesh への変換
+        mesh = Mesh( mesh.verts_packed(), mesh.faces_packed() )
+
+        # メッシュを頂点連結関係を取得？
+        connectivity = get_vert_connectivity(mesh)
+
+        # connectivity is a sparse matrix, and np.clip can not applied directly on a sparse matrix.
+        connectivity.data = np.clip(connectivity.data, 0, 1)
+        laplacian = normalize(connectivity, norm='l1', axis=1)
+        laplacian = sp.eye(connectivity.shape[0]) - laplacian
+        return laplacian
+
+    def get_nearest_points_and_normals(vert, base_verts, base_faces):
+        """
+        inspired from frankengeist.body.ch.mesh_distance.MeshDistanceSquared
+        """
+        fn = TriNormals(v=base_verts, f=base_faces).reshape((-1, 3))
+        vn = VertNormals(v=base_verts, f=base_faces).reshape((-1, 3))
+        tree = AabbTree(Mesh(v=base_verts, f=base_faces))
+
+        nearest_tri, nearest_part, nearest_point = tree.nearest(vert, nearest_part=True)
+        nearest_tri = nearest_tri.ravel().astype(np.long)
+        nearest_part = nearest_part.ravel().astype(np.long)
+        nearest_normals = np.zeros_like(vert)
+
+        # nearest_part tells you whether the closest point in triangle abc is in the interior (0), on an edge (ab:1,bc:2,ca:3), or a vertex (a:4,b:5,c:6)
+        cl_tri_idxs = np.nonzero(nearest_part == 0)[0].astype(np.int)
+        cl_vrt_idxs = np.nonzero(nearest_part > 3)[0].astype(np.int)
+        cl_edg_idxs = np.nonzero((nearest_part <= 3) & (nearest_part > 0))[0].astype(np.int)
+
+        nt = nearest_tri[cl_tri_idxs]
+        nearest_normals[cl_tri_idxs] = fn[nt]
+
+        nt = nearest_tri[cl_vrt_idxs]
+        npp = nearest_part[cl_vrt_idxs] - 4
+        nearest_normals[cl_vrt_idxs] = vn[base_faces[nt, npp]]
+
+        nt = nearest_tri[cl_edg_idxs]
+        npp = nearest_part[cl_edg_idxs] - 1
+        nearest_normals[cl_edg_idxs] += vn[base_faces[nt, npp]]
+        npp = np.mod(nearest_part[cl_edg_idxs], 3)
+        nearest_normals[cl_edg_idxs] += vn[base_faces[nt, npp]]
+        nearest_normals = nearest_normals / (np.linalg.norm(nearest_normals, axis=-1, keepdims=True) + 1.e-10)
+        return nearest_point, nearest_normals
+
+    # laplacian を計算
+    if( laplacian is None ):
+        laplacian = calc_laplacian(mesh)
+
+    # mesh と base_mesh 間で、最も近い頂点ち法線ベクトルを取得？
+    nearest_points, nearest_normals = get_nearest_points_and_normals(
+        mesh.verts_packed().detach().cpu().numpy(), 
+        base_mesh.verts_packed().detach().cpu().numpy(), 
+        base_mesh.faces_packed().detach().cpu().numpy()
+    )
+
+    # ?
+    direction = np.sign(np.sum((mesh.verts_packed().detach().cpu().numpy() - nearest_points) * nearest_normals, axis=-1))
+    indices = np.where(direction < 0)[0]
+
+    eps = 0.001
+    ww = 2.0
+    n_verts = mesh.num_verts_per_mesh()[0]
+
+    pentgt_points = nearest_points[indices] - mesh.verts_packed().detach().cpu().numpy()[indices]
+    pentgt_points = nearest_points[indices] + eps * pentgt_points / np.expand_dims(0.0001 + np.linalg.norm(pentgt_points, axis=1), 1)
+    tgt_points = mesh.verts_packed().detach().cpu().numpy().copy()
+    tgt_points[indices] = ww * pentgt_points
+
+    rc = np.arange(n_verts)
+    data = np.ones(n_verts)
+    data[indices] *= ww
+    I = csr_matrix((data, (rc, rc)), shape=(n_verts, n_verts))
+
+    A = vstack([laplacian, I])
+    b = np.vstack(( laplacian.dot(mesh.verts_packed().detach().cpu().numpy()), tgt_points ))
+    res = spsolve(A.T.dot(A), A.T.dot(b))
+
+    # 
+    new_mesh = Meshes( torch.from_numpy(res).float().unsqueeze(0), mesh.faces_packed().unsqueeze(0) )
     return new_mesh
