@@ -25,13 +25,24 @@ class SMPLModel(nn.Module):
             self.joint_regressor = torch.from_numpy(np.array(params['joint_regressor'].T.todense())).float().requires_grad_(False).to(device)
         else:
             self.joint_regressor = torch.from_numpy( np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
-
+            
         self.weights = torch.from_numpy(np.array(params['weights'])).float().requires_grad_(False).to(device)
         self.posedirs = torch.from_numpy(np.array(params['posedirs'])).float().requires_grad_(False).to(device)
         self.v_template = torch.from_numpy(np.array(params['v_template'])).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(np.array(params['shapedirs'])).float().requires_grad_(False).to(device)
         self.kintree_table = params['kintree_table']
         self.faces = np.array(params['f'])
+        if 'bs_type' in params.keys():
+            self.bs_type = params['bs_type']
+        if 'bs_style' in params.keys():
+            self.bs_style = params['bs_style']
+        if 'J' in params.keys():
+            self.J = params['J']
+        if 'v_personal' in params.keys():
+            self.v_personal = torch.from_numpy(np.array(params['v_personal'])).float().to(device)
+        else:
+            self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
+
         if( debug ):
             print( "self.registration_path : ", self.registration_path )            
             print( "self.J_regressor.shape : ", self.J_regressor.shape )            # torch.Size([24, 6890])

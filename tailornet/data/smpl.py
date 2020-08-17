@@ -62,7 +62,7 @@ class SMPLModel(nn.Module):
             self.v_personal = torch.from_numpy(np.array(params['v_personal'])).float().to(device)
         else:
             self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
-            
+
         self.betas = torch.zeros( (self.batch_size, 10), requires_grad=False).float().to(device)
         self.thetas = torch.zeros( (self.batch_size, 72), requires_grad=False).float().to(device)
         self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(self.device)
