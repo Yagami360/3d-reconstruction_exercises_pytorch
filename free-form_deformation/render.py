@@ -166,29 +166,30 @@ if __name__ == '__main__':
     else:
         ffd = FFD(ffd_params)
 
-    # FFD オブジェクトの内容
-    # conversion_unit = 1.0
-    # n_control_points = [2 2 2]
-    # box_length = [1. 1. 1.]
-    # rot_angle  = [0. 0. 0.]
-    # array_mu_x = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
-    # array_mu_y = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
-    # array_mu_z = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
-    # デフォルト設定 : 格子の長さ1、原点 $(0, 0, 0)$、回転なし
+    # 制御点の変位を制御するために、`array_mu_x`, `array_mu_y`, `array_mu_z` の値を変えれば良い
+    if( args.ffd_param_file == "" ):
+        x_min = torch.min( mesh.verts_packed().squeeze()[:,0] ).detach().cpu().numpy()
+        x_max = torch.max( mesh.verts_packed().squeeze()[:,0] ).detach().cpu().numpy()
+        y_min = torch.min( mesh.verts_packed().squeeze()[:,1] ).detach().cpu().numpy()
+        y_max = torch.max( mesh.verts_packed().squeeze()[:,1] ).detach().cpu().numpy()
+        z_min = torch.min( mesh.verts_packed().squeeze()[:,2] ).detach().cpu().numpy()
+        z_max = torch.max( mesh.verts_packed().squeeze()[:,2] ).detach().cpu().numpy()
+        ffd.box_length = [ x_max - x_min, y_max - y_min, z_max - z_min ]
+        ffd.box_origin = [ x_min, y_min, z_min ]
     if( args.debug ):
+        # FFD オブジェクトの内容
+        # conversion_unit = 1.0
+        # n_control_points = [2 2 2]
+        # box_length = [1. 1. 1.]
+        # rot_angle  = [0. 0. 0.]
+        # array_mu_x = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+        # array_mu_y = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+        # array_mu_z = [ [ [0. 0.] [0. 0.] ] [ [0. 0.] [0. 0.] ] ] / shape = (2, 2, 2)
+        # デフォルト設定 : 格子の長さ1、原点 $(0, 0, 0)$、回転なし
         print( "ffd : \n", ffd )    # conversion_unit = 1.0, n_control_points, box_length, ...
         print( "ffd.array_mu_x.shape : \n", ffd.array_mu_x.shape )
         print( "ffd.array_mu_y.shape : \n", ffd.array_mu_y.shape )
         print( "ffd.array_mu_z.shape : \n", ffd.array_mu_z.shape )
-
-    # 制御点の変位を制御するために、`array_mu_x`, `array_mu_y`, `array_mu_z` の値を変えれば良い
-    if( args.ffd_param_file == "" ):
-        ffd.array_mu_x[0, 1, 1] = 5
-        ffd.array_mu_x[1, 1, 1] = 5
-        ffd.array_mu_y[1, 1, 1] = 5
-        ffd.array_mu_z[1, 1, 1] = 0
-    if( args.debug ):
-        print( "ffd.control_points() : \n", ffd.control_points() )
         print( "ffd.control_points().shape : \n", ffd.control_points().shape )  # (8, 3)
 
     # __call__(src_pts) を呼び出すことで、指定された頂点の FFD 変形を実行
@@ -206,6 +207,11 @@ if __name__ == '__main__':
     mesh_ffd = Meshes( [torch.from_numpy(mesh_verts_ffd).float().to(device)], [mesh.faces_packed()] ).to(device)
     if( args.shader == "textured_soft_phong_shader" ):
         mesh_ffd.textures = mesh.textures
+    elif( args.shader == "soft_phong_shader" ):
+        from pytorch3d.structures import Textures
+        verts_rgb_colors = torch.ones([1, mesh.num_verts_per_mesh().item(), 3]).to(device) * 0.9
+        texture = Textures(verts_rgb=verts_rgb_colors)
+        mesh_ffd.textures = texture
 
     save_mesh_obj( mesh_ffd.verts_packed(), mesh_ffd.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_ffd.obj" ) )
 
@@ -250,7 +256,6 @@ if __name__ == '__main__':
     elif( args.shader == "soft_phong_shader" ):
         shader = SoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
     elif( args.shader == "textured_soft_phong_shader" ):
-        # The textured phong shader will interpolate the texture uv coordinates for each vertex, sample from a texture image and apply the Phong lighting model
         shader = TexturedSoftPhongShader( device = device, cameras = cameras, lights = lights, materials = materials )
     else:
         NotImplementedError()
@@ -261,54 +266,66 @@ if __name__ == '__main__':
     #================================
     # レンダリングループ処理
     #================================
-    new_lights = lights.clone()
-    light_pos_x = args.light_pos_x
-    light_pos_y = args.light_pos_y
-    light_pos_z = args.light_pos_z
     camera_dist = args.camera_dist
     camera_elev = args.camera_elev
     camera_azim = args.camera_azim
 
     for step in tqdm( range(args.render_steps), desc="render"):
         #-----------------------------
-        # ライトの移動＆再レンダリング
+        # FFDでの変形＆再レンダリング
         #-----------------------------
-        light_pos_x += 0.0
-        light_pos_y += 0.0
-        light_pos_z += 0.5
-        new_lights.location = torch.tensor( [light_pos_x, light_pos_y, light_pos_z], device = device )[None]
+        ffd.array_mu_x[0,0,0] += 0.1
+        ffd.array_mu_y[0,0,0] += 0.0
+        ffd.array_mu_z[0,0,0] += 0.0
+
+        ffd.array_mu_x[1,0,0] += 0.0
+        ffd.array_mu_y[1,0,0] += 0.0
+        ffd.array_mu_z[1,0,0] += 0.0
+
+        ffd.array_mu_x[0,1,0] += 0.0
+        ffd.array_mu_y[0,1,0] += 0.0
+        ffd.array_mu_z[0,1,0] += 0.0
+
+        ffd.array_mu_x[1,1,0] += 0.0
+        ffd.array_mu_y[1,1,0] += 0.0
+        ffd.array_mu_z[1,1,0] += 0.0
+
+        mesh_verts_ffd = ffd( mesh_ffd.verts_packed().clone().cpu().numpy() )
+        mesh_ffd = Meshes( [torch.from_numpy(mesh_verts_ffd).float().to(device)], [mesh.faces_packed()] ).to(device)
+        if( args.shader == "textured_soft_phong_shader" ):
+            mesh_ffd.textures = mesh.textures
+        elif( args.shader == "soft_phong_shader" ):
+            from pytorch3d.structures import Textures
+            verts_rgb_colors = torch.ones([1, mesh.num_verts_per_mesh().item(), 3]).to(device) * 0.9
+            texture = Textures(verts_rgb=verts_rgb_colors)
+            mesh_ffd.textures = texture
+
+        save_mesh_obj( mesh_ffd.verts_packed(), mesh_ffd.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_ffd.obj" ) )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials )
-        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = cameras, lights = new_lights, materials = materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        mesh_ffd_img_tsr = mesh_ffd_img_tsr * 2.0 - 1.0
-        if( args.debug and step == 0 ):
-            print( "min={}, max={}".format(torch.min(mesh_img_tsr), torch.max(mesh_img_tsr) ) )
-
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_light.png" ) )
-        save_image( mesh_ffd_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_ffd_light.png" ) )
+        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
+        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
+        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh.png" ) )
+        save_image( mesh_ffd_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_ffd.png" ) )
 
         # visual images
         visuals = [
             [ mesh_img_tsr.transpose(1,3).transpose(2,3), mesh_ffd_img_tsr.transpose(1,3).transpose(2,3) ],
         ]
-        board_add_images(board_train, 'render_light', visuals, step+1)
+        board_add_images(board_train, 'render_ffd', visuals, step+1)
 
         #-----------------------------
         # カメラの移動＆再レンダリング
         #-----------------------------
-        camera_dist += 0.1
-        camera_elev += 5.0
+        camera_dist += 0.0
+        camera_elev += 0.0
         camera_azim += 5.0
         rot_matrix, trans_matrix = look_at_view_transform( dist = camera_dist, elev = camera_elev, azim = camera_azim )
         new_cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials )
-        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = new_cameras, lights = lights, materials = materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        mesh_ffd_img_tsr = mesh_ffd_img_tsr * 2.0 - 1.0
+        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials ) * 2.0 - 1.0
+        mesh_ffd_img_tsr = renderer( mesh_ffd, cameras = new_cameras, lights = lights, materials = materials ) * 2.0 - 1.0
         save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_camera.png" ) )
         save_image( mesh_ffd_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_ffd_camera.png" ) )
 
