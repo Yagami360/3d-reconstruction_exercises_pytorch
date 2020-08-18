@@ -4,6 +4,7 @@ import numpy as np
 import random
 from tqdm import tqdm
 from PIL import Image
+import json
 
 # PyTorch
 import torch
@@ -21,7 +22,6 @@ from psbody.mesh import Mesh
 
 # PyTorch 3D
 import pytorch3d
-#from pytorch3d import _C
 from pytorch3d.io import load_obj, save_obj, load_objs_as_meshes
 from pytorch3d.structures import Meshes                                                 # メッシュ関連
 #from pytorch3d.structures import Textures                                               # テクスチャー関連
@@ -33,22 +33,28 @@ from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
 # 自作モジュール
-from data.smpl import SMPLModel
-from data.smpl_mgn import SMPLMGNModel
-from data.smpl_tailor import SMPLTailorModel
+from data.tailornet_dataset import TailornetDataset, TailornetDataLoader
+from models.smpl import SMPLModel
+from models.smpl_mgn import SMPLMGNModel
+from models.smpl_tailor import SMPLTailorModel
+from models.tailor_networks import HFLayer
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
 from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh_interpenetration
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="smpl_g+", help="実験名")
-    parser.add_argument("--smpl_registration_path", type=str, default="datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl")
-    parser.add_argument("--cloth_info_path", type=str, default="datasets/garment_class_info.pkl")
+    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="pant", help="服の種類")
+    parser.add_argument('--gender', choices=['female', 'male', 'neutral'], default="female", help="性別")
+    parser.add_argument("--smpl_registration_dir", type=str, default="datasets/smpl_registrations")
+    parser.add_argument("--tailornet_dataset_dir", type=str, default="datasets/tailornet_dataset")
+    parser.add_argument("--cloth_info_path", type=str, default="datasets/tailornet_dataset/garment_class_info.pkl")
     parser.add_argument("--texture_path", type=str, default="")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
-    parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
+    parser.add_argument('--load_checkpoints_dir', type=str, default="checkpoints/tailornet", help="モデルの読み込みファイルのパス")
     parser.add_argument('--tensorboard_dir', type=str, default="tensorboard", help="TensorBoard のディレクトリ")
     parser.add_argument("--batch_size", type=int, default=1)
 
@@ -126,20 +132,41 @@ if __name__ == '__main__':
     #================================
     # データセットの読み込み
     #================================
-    # SMPL の読み込み
+    ds_test = TailornetDataset( args = args, dataset_dir = args.tailornet_dataset_dir, cloth_type = args.cloth_type, gender = args.gender, debug = args.debug )
+
+    #================================
+    # モデルの生成
+    #================================
+    # SMPL 
     smpl = SMPLTailorModel( 
-        registration_path = args.smpl_registration_path, 
+        smpl_registration_dir = args.smpl_registration_dir, 
         cloth_info_path = args.cloth_info_path,
+        cloth_type = args.cloth_type, gender = args.gender,
         batch_size = args.batch_size, device = device, debug = args.debug
     )
 
+    # TailorNet
+    if( os.path.exists( os.path.join(args.load_checkpoints_dir, 'params.json') ) ):
+        with open(os.path.join(args.load_checkpoints_dir, 'params.json')) as jf:
+            tailor_params = json.load(jf)
+    else:
+        with open(os.path.join(args.load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as jf:
+            tailor_params = json.load(jf)
+
+    tailornet_hf = HFLayer( params = tailor_params, n_verts = smpl.cloth_info[args.cloth_type]['vert_indices'].shape[0] * 3 )
+
     #================================
-    # メッシュの生成
+    # SMPL でのメッシュ生成
     #================================
-    # SMPL を用いた制御パラメータ β,θ を変えた場合の人体メッシュ生成
+    # SMPL 制御パラメータ β,θ の初期化
     betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
     thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
+    gammas = torch.from_numpy( (np.random.rand(args.batch_size, 4) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)    
+
+    # SMPL でのメッシュ生成
     verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas, thetas )
+
+    # Mesh 型に変換
     mesh_body = Meshes(verts_body, faces_body).to(device)
     mesh_cloth = Meshes(verts_cloth, faces_cloth).to(device)
     print( "[mesh_body] num_verts={}, num_faces={}".format(mesh_body.num_verts_per_mesh(),mesh_body.num_faces_per_mesh()) )

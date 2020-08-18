@@ -5,6 +5,11 @@
 *.tfevents.*
 *.obj
 *.pkl
+*.json
+*.tar
+*.txt
+*.npz
+*.npy
 .DS_Store
 
 .vscode/

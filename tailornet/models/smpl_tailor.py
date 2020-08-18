@@ -14,19 +14,27 @@ from psbody.mesh import Mesh
 from pytorch3d.structures import Meshes
 
 # 自作モジュール
-from data.smpl import SMPLModel
-from data.smpl_mgn import SMPLMGNModel
+from models.smpl import SMPLModel
+from models.smpl_mgn import SMPLMGNModel
 from utils.mesh import upsampling_mesh
 
 class SMPLTailorModel(SMPLMGNModel):
     def __init__( 
         self,
-        registration_path,                      # SMPL 人体メッシュの registration file
+        smpl_registration_dir,                  #
         cloth_info_path,                        #
         cloth_type = "old-t-shirt",
+        gender = "female",
         batch_size = 1, 
         device = torch.device("cpu"), debug = False
     ):
+        if( gender == "female" ):
+            registration_path = os.path.join( smpl_registration_dir, "basicModel_f_lbs_10_207_0_v1.0.0.pkl" )
+        elif( gender == "male" ):
+            registration_path = os.path.join( smpl_registration_dir, "basicmodel_m_lbs_10_207_0_v1.0.0.pkl" )
+        else:
+            registration_path = os.path.join( smpl_registration_dir, "basicModel_neutral_lbs_10_207_0_v1.0.0.pkl" )
+
         super(SMPLTailorModel, self).__init__(
             registration_path = registration_path, 
             digital_wardrobe_registration_path = "", 

@@ -14,7 +14,7 @@ from psbody.mesh import Mesh
 from pytorch3d.structures import Meshes
 
 # 自作モジュール
-from data.smpl import SMPLModel
+from models.smpl import SMPLModel
 from utils.mesh import upsampling_mesh
 
 class SMPLMGNModel(SMPLModel):

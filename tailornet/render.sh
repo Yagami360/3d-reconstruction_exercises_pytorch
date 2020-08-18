@@ -11,8 +11,8 @@ rm -rf tensorboard/${EXPER_NAME}
 
 python render.py \
     --exper_name ${EXPER_NAME} \
-    --smpl_registration_path datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl \
-    --cloth_info_path datasets/garment_class_info.pkl \
+    --smpl_registration_dir datasets/smpl_registrations \
+    --cloth_info_path datasets/tailornet_dataset/garment_class_info.pkl \
     --shader soft_silhouette_shader \
     --debug
 
