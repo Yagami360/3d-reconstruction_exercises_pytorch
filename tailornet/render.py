@@ -34,11 +34,7 @@ from pytorch3d.renderer import MeshRenderer                                     
 
 # 自作モジュール
 from data.tailornet_dataset import TailornetDataset
-from models.smpl import SMPLModel
-from models.smpl_mgn import SMPLMGNModel
 from models.smpl_tailor import SMPLTailorModel
-from models.smpl_tailor2 import SMPLTailorModel2
-from models.tailor_networks import TailorNet
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
 from utils.mesh import normalize_y_rotation
@@ -141,31 +137,20 @@ if __name__ == '__main__':
     # SMPL
     smpl = SMPLTailorModel( 
         smpl_registration_dir = args.smpl_registration_dir, 
+        tailornet_dataset_dir = args.tailornet_dataset_dir,
+        load_checkpoints_dir = args.load_checkpoints_dir,
         cloth_info_path = args.cloth_info_path,
-        cloth_type = args.cloth_type, gender = args.gender,
-        batch_size = args.batch_size, device = device, debug = args.debug
-    )
-    """
-    smpl = SMPLTailorModel2( 
-        smpl_registration_dir = args.smpl_registration_dir, 
-        cloth_info_path = args.cloth_info_path,
-        cloth_type = args.cloth_type, gender = args.gender,
-        batch_size = args.batch_size, device = device, debug = args.debug
-    ).to(device)
-    """
-    
-    # TailorNet
-    model = TailorNet( 
-        tailornet_dataset_dir = args.tailornet_dataset_dir, 
-        load_checkpoints_dir = args.load_checkpoints_dir, 
-        cloth_type = args.cloth_type, gender = args.gender, 
+        cloth_type = args.cloth_type, 
+        gender = args.gender,
+        batch_size = args.batch_size, 
         kernel_sigma = args.kernel_sigma,
-        device = device, debug = args.debug
-    ).to(device)
-    print( "model : ", model )
+        device = device, 
+        debug = args.debug
+    )
+    print( "smpl : ", smpl )
 
     #================================
-    # モデルの推論処理
+    # SMPL でのメッシュ生成
     #================================
     # SMPL 制御パラメータ β,θ の初期化
     betas = torch.from_numpy( np.zeros((args.batch_size,10)) ).float().requires_grad_(False).to(device)
@@ -190,27 +175,15 @@ if __name__ == '__main__':
     print( "betas.shape : ", betas.shape )
     print( "thetas.shape : ", thetas.shape )
     print( "gammas.shape : ", gammas.shape )
-    print( "[thetas] sum={}".format(torch.sum(thetas)) )    # sum=-0.30397236347198486
-    print( "[betas] sum={}".format(torch.sum(betas)) )      # sum=4.0
-    print( "[gammas] sum={}".format(torch.sum(gammas)) )    # sum=1.5
-
+    #print( "[thetas] sum={}".format(torch.sum(thetas)) )    # sum=-0.30397236347198486
+    #print( "[betas] sum={}".format(torch.sum(betas)) )      # sum=4.0
+    #print( "[gammas] sum={}".format(torch.sum(gammas)) )    # sum=1.5
     #print( "betas : ", betas )
     #print( "thetas : ", thetas )
     #print( "gammas : ", gammas )
 
-    model.eval()
-    with torch.no_grad():
-        # 頂点変位を算出
-        cloth_displacements = model( betas, thetas, gammas )
-        print( "cloth_displacements.shape : ", cloth_displacements.shape )
-        print( "cloth_displacements : ", cloth_displacements )
-        print( "[cloth_displacements] min={}, max={}, sum={}".format(torch.min(cloth_displacements), torch.max(cloth_displacements), torch.sum(cloth_displacements)) )
-
-    #================================
     # SMPL でのメッシュ生成
-    #================================
-    # SMPL でのメッシュ生成
-    mesh_body, mesh_cloth = smpl( betas = betas, thetas = thetas, cloth_displacements = cloth_displacements )
+    mesh_body, mesh_cloth = smpl( betas = betas, thetas = thetas, gammas = gammas )
     print( "[mesh_body] num_verts={}, num_faces={}".format(mesh_body.num_verts_per_mesh(),mesh_body.num_faces_per_mesh()) )
     print( "[mesh_cloth] num_verts={}, num_faces={}".format(mesh_cloth.num_verts_per_mesh(),mesh_cloth.num_faces_per_mesh()) )
     if( args.shader == "soft_phong_shader" ):

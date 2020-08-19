@@ -116,7 +116,7 @@ def repose_mesh( src_mesh, smpl, vert_indices, device = torch.device("cpu") ):
         NotImplementedError()
 
     #print( "offsets : ", offsets )
-    #smpl.v_personal = offsets
+    smpl.v_personal = offsets
 
     # 
     smpl.thetas = thetas
