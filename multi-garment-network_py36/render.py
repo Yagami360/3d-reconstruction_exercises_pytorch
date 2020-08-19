@@ -33,8 +33,8 @@ from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
 # 自作モジュール
-from data.smpl import SMPLModel
-from data.smpl_mgn import SMPLMGNModel
+from models.smpl import SMPLModel
+from models.smpl_mgn import SMPLMGNModel
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
 from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh_interpenetration

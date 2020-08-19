@@ -14,7 +14,7 @@ from psbody.mesh import Mesh
 from pytorch3d.structures import Meshes
 
 # 自作モジュール
-from data.smpl import SMPLModel
+from models.smpl import SMPLModel
 from utils.mesh import upsampling_mesh
 
 class SMPLMGNModel(SMPLModel):
@@ -27,19 +27,22 @@ class SMPLMGNModel(SMPLModel):
         batch_size = 1, 
         device = torch.device("cpu"), debug = False
     ):
-        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug = False)
+        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug = debug)
         self.digital_wardrobe_registration_path = digital_wardrobe_registration_path
         self.cloth_smpl_fts_path = cloth_smpl_fts_path
         self.cloth_type = cloth_type
 
-        # メッシュを高解像度化したパラメーターを設定
-        #mesh = Meshes(self.v_template.unsqueeze(0), self.faces.reshape(1,self.faces.shape[0],self.faces.shape[1]))
-        #mesh = Meshes(self.v_template.unsqueeze(0), torch.from_numpy(self.faces).uint().requires_grad_(False).to(device).unsqueeze(0))
-                
+        #----------------------------
+        # メッシュを高解像度化
+        #----------------------------
         hres_verts, hres_faces, mapping = upsampling_mesh(self.v_template.detach().cpu().numpy(), self.faces)
         #print( "hres_verts.shape={}, hres_faces.shape={}  : ".format(hres_verts.shape, hres_faces.shape) )
 
+        #----------------------------------------------------------
+        # 高解像度化したメッシュを元に smpl registration param を再生成
+        #----------------------------------------------------------
         self.v_template = torch.from_numpy(hres_verts).float().requires_grad_(False).to(device)
+        self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
         self.faces = hres_faces
         self.weights = torch.from_numpy(
             np.hstack([
@@ -70,32 +73,48 @@ class SMPLMGNModel(SMPLModel):
         self.posedirs = torch.from_numpy(mapping.dot(self.posedirs.detach().cpu().numpy().reshape((-1, 207))).reshape(-1, 3, 207)).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(mapping.dot(self.shapedirs.detach().cpu().numpy().reshape((-1, self.shapedirs.shape[-1]))).reshape(-1, 3, self.shapedirs.shape[-1])).float().requires_grad_(False).to(device)
 
+        #----------------------------------------------------------
         # digital_wardrobe にある betas, thetas を保管した registration file からデータを抽出
-        with open(self.digital_wardrobe_registration_path, 'rb') as f:
-            params = pickle.load(f, encoding='latin1')
-            if( debug ):
-                print( "params.keys() :\n", params.keys() )     # dict_keys(['gender', 'trans', 'pose', 'betas'])
+        #----------------------------------------------------------
+        if( os.path.exists(self.digital_wardrobe_registration_path) ):
+            with open(self.digital_wardrobe_registration_path, 'rb') as f:
+                params = pickle.load(f, encoding='latin1')
+                if( debug ):
+                    print( "params.keys() :\n", params.keys() )     # dict_keys(['gender', 'trans', 'pose', 'betas'])
 
-        self.betas = torch.from_numpy(np.array(params['betas'])).float().requires_grad_(False).to(device)
-        self.thetas = torch.from_numpy(np.array(params['pose'])).float().requires_grad_(False).to(device)
-        self.trans = torch.from_numpy(np.array(params['trans'])).float().requires_grad_(False).to(device)
-        self.gender = params['gender']
+            self.betas = torch.from_numpy(np.array(params['betas'])).float().requires_grad_(False).to(device)
+            self.thetas = torch.from_numpy(np.array(params['pose'])).float().requires_grad_(False).to(device)
+            self.trans = torch.from_numpy(np.array(params['trans'])).float().requires_grad_(False).to(device)
+            self.gender = params['gender']
+        else:
+            self.betas = torch.zeros( (self.batch_size, 10), requires_grad=False).float().to(device)
+            self.thetas = torch.zeros( (self.batch_size, 72), requires_grad=False).float().to(device)
+            self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(device)
+            self.gender = "female"
 
+        #----------------------------------------------------------
         # SMPL 人体メッシュと服メッシュの一致する頂点番号を保管した registration file からデータを抽出
-        with open(self.cloth_smpl_fts_path, 'rb') as f:
-            vert_indices, fts = pickle.load(f, encoding='latin1')
-            if( debug ):
-                print( "vert_indices.keys() :\n", vert_indices.keys() )     # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
-                print( "fts.keys() :\n", fts.keys() )                       # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
+        #----------------------------------------------------------
+        if( os.path.exists(self.digital_wardrobe_registration_path) ):
+            with open(self.cloth_smpl_fts_path, 'rb') as f:
+                vert_indices, fts = pickle.load(f, encoding='latin1')
+                if( debug ):
+                    print( "vert_indices.keys() :\n", vert_indices.keys() )     # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
+                    print( "fts.keys() :\n", fts.keys() )                       # dict_keys(['Pants', 'ShirtNoCoat', 'TShirtNoCoat', 'ShortPants', 'LongCoat'])
 
-        self.vert_indices = np.array(vert_indices[self.cloth_type])
-        self.fts = np.array(fts[self.cloth_type])
+            self.vert_indices = np.array(vert_indices[self.cloth_type])
+            self.fts = np.array(fts[self.cloth_type])
+        else:
+            self.vert_indices = None
+            self.fts = None
+
         if( debug ):
             print( "self.registration_path : ", self.registration_path )            
             print( "self.J_regressor.shape : ", self.J_regressor.shape )            # 
             print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # 
             print( "self.posedirs.shape : ", self.posedirs.shape )                  # 
             print( "self.v_template.shape : ", self.v_template.shape )              # 
+            print( "self.v_personal.shape : ", self.v_personal.shape )              # 
             print( "self.weights.shape : ", self.weights.shape )                    # 
             print( "self.shapedirs.shape : ", self.shapedirs.shape )                # 
             print( "self.kintree_table.shape : ", self.kintree_table.shape )        # 
@@ -109,8 +128,10 @@ class SMPLMGNModel(SMPLModel):
             #print( "self.trans : ", self.trans )
             print( "self.gender : ", self.gender )
 
-            print( "self.vert_indices.shape : ", self.vert_indices.shape )
-            print( "self.fts.shape : ", self.fts.shape )
+            if( self.vert_indices is not None ):
+                print( "self.vert_indices.shape : ", self.vert_indices.shape )
+            if( self.fts is not None ):
+                print( "self.fts.shape : ", self.fts.shape )
             #print( "self.vert_indices : ", self.vert_indices )
             #print( "self.fts : ", self.fts )
 

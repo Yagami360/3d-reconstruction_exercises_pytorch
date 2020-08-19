@@ -2,36 +2,59 @@
 import os
 import numpy as np
 import pickle
+import scipy.sparse as sp
 
 import torch
 import torch.nn as nn
 
 class SMPLModel(nn.Module):
-    def __init__( self, registration_path, device = torch.device( "cpu" ), debug = False ):
+    def __init__( self, registration_path, batch_size = 1, device = torch.device( "cpu" ), debug = False ):
         super(SMPLModel, self).__init__()
         self.device = device
         self.registration_path = registration_path
+        self.batch_size = batch_size
 
+        #----------------------------
         # registration の読み込み        
+        #----------------------------
         with open(self.registration_path, 'rb') as f:
             # encoding='latin1' : python2 で書き込まれた pickle を python3 で読み込むときに必要 / 要 chumpy
             params = pickle.load(f, encoding='latin1')
             if( debug ):
                 print( "params.keys() :\n", params.keys() ) # dict_keys(['J_regressor_prior', 'f', 'J_regressor', 'kintree_table', 'J', 'weights_prior', 'weights', 'vert_sym_idxs', 'posedirs', 'pose_training_info', 'bs_style', 'v_template', 'shapedirs', 'bs_type'])
 
-        # registration からデータを抽出
-        self.J_regressor = torch.from_numpy(np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
-        if 'joint_regressor' in params.keys():
-            self.joint_regressor = torch.from_numpy(np.array(params['joint_regressor'].T.todense())).float().requires_grad_(False).to(device)
-        else:
-            self.joint_regressor = torch.from_numpy( np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
-            
+        #--------------------------------------
+        # smpl registration param を抽出
+        #--------------------------------------
         self.weights = torch.from_numpy(np.array(params['weights'])).float().requires_grad_(False).to(device)
         self.posedirs = torch.from_numpy(np.array(params['posedirs'])).float().requires_grad_(False).to(device)
         self.v_template = torch.from_numpy(np.array(params['v_template'])).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(np.array(params['shapedirs'])).float().requires_grad_(False).to(device)
         self.kintree_table = params['kintree_table']
         self.faces = np.array(params['f'])
+
+        self.J_reg_csr = params['J_regressor'].asformat('csr')
+        #self.J_regressor = torch.from_numpy(np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
+        self.J_regressor = torch.from_numpy(
+            np.array(
+                sp.csr_matrix(
+                    ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, self.v_template.shape[0] )
+                ).todense()
+            )
+        ).float().requires_grad_(False).to(device)
+
+        if 'joint_regressor' in params.keys():
+            self.joint_regressor = torch.from_numpy(np.array(params['joint_regressor'].T.todense())).float().requires_grad_(False).to(device)
+        else:
+            #self.joint_regressor = torch.from_numpy( np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
+            self.joint_regressor = torch.from_numpy(
+                np.array(
+                    sp.csr_matrix(
+                        ( self.J_reg_csr.data, self.J_reg_csr.indices, self.J_reg_csr.indptr ), shape=(24, self.v_template.shape[0] )
+                    ).todense()
+                )
+            ).float().requires_grad_(False).to(device)
+
         if 'bs_type' in params.keys():
             self.bs_type = params['bs_type']
         if 'bs_style' in params.keys():
@@ -43,19 +66,27 @@ class SMPLModel(nn.Module):
         else:
             self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
 
+        #-------------------------------
+        # SMPL 制御パラメータ初期化
+        #-------------------------------
+        self.betas = torch.zeros( (self.batch_size, 10), requires_grad=False).float().to(device)
+        self.thetas = torch.zeros( (self.batch_size, 72), requires_grad=False).float().to(device)
+        self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(self.device)
         if( debug ):
             print( "self.registration_path : ", self.registration_path )            
-            print( "self.J_regressor.shape : ", self.J_regressor.shape )            # torch.Size([24, 6890])
-            print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # torch.Size([24, 6890])
-            print( "self.posedirs.shape : ", self.posedirs.shape )                  # torch.Size([24, 6890])
-            print( "self.v_template.shape : ", self.v_template.shape )              # torch.Size([6890, 3])
-            print( "self.shapedirs.shape : ", self.shapedirs.shape )                # torch.Size([6890, 3, 10])
+            print( "self.J_regressor.shape : ", self.J_regressor.shape )            # torch.Size([24, V])
+            print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # torch.Size([24, V])
+            print( "self.posedirs.shape : ", self.posedirs.shape )                  # torch.Size([24, V])
+            print( "self.v_template.shape : ", self.v_template.shape )              # torch.Size([V, 3])
+            print( "self.v_personal.shape : ", self.v_personal.shape )              # 
+            print( "self.weights.shape : ", self.weights.shape )                    # 
+            print( "self.shapedirs.shape : ", self.shapedirs.shape )                # torch.Size([V, 3, 10])
             print( "self.kintree_table.shape : ", self.kintree_table.shape )        # (2, 24)
-            print( "self.faces.shape : ", self.faces.shape )                        # (13776, 3)
+            print( "self.faces.shape : ", self.faces.shape )                        # (F, 3)
 
         return
 
-    def forward(self, betas, thetas, trans = None, simplify = False ):
+    def forward(self, betas = None, thetas = None, trans = None, simplify = False ):
         """
         [args]
             betas : SMPL の人物形状パラメータ beta / shape = [B,10]
@@ -66,10 +97,15 @@ class SMPLModel(nn.Module):
             faces : メッシュの面情報 / shape = [B,13776,3]
             joints : 関節点の位置情報 / shape = [B,19,3]
         """
-        batch_num = betas.shape[0]
+        if( betas is None ):
+            betas = self.betas
+        if( thetas is None ):
+            thetas = self.thetas
         if( trans is None ):
-            trans = torch.from_numpy(np.zeros((batch_num, 3))).float().requires_grad_(False).to(self.device)
+            trans = self.trans
 
+        self.betas = betas
+        self.thetas = thetas
         #print( "betas.shape : ", betas.shape )
         #print( "thetas.shape : ", thetas.shape )
         #print( "trans.shape : ", trans.shape )
@@ -87,18 +123,18 @@ class SMPLModel(nn.Module):
         J = torch.matmul(self.J_regressor, v_shaped)
 
         # SMPL の人物姿勢パラメータ theta による頂点 v の変形
-        R_cube_big = self.rodrigues(thetas.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
+        R_cube_big = self.rodrigues(thetas.view(-1, 1, 3)).reshape(self.batch_size, -1, 3, 3)
         #print( "R_cube_big.shape : ", R_cube_big.shape )
 
         if simplify:
-            v_posed = v_shaped
+            v_posed = v_shaped + self.v_personal
         else:
             R_cube = R_cube_big[:, 1:, :, :]
-            I_cube = (torch.eye(3, dtype=torch.float32).unsqueeze(dim=0) + torch.zeros((batch_num, R_cube.shape[1], 3, 3), dtype=torch.float32)).to(self.device)
-            lrotmin = (R_cube - I_cube).reshape(batch_num, -1, 1).squeeze(dim=2)
+            I_cube = (torch.eye(3, dtype=torch.float32).unsqueeze(dim=0) + torch.zeros((self.batch_size, R_cube.shape[1], 3, 3), dtype=torch.float32)).to(self.device)
+            lrotmin = (R_cube - I_cube).reshape(self.batch_size, -1, 1).squeeze(dim=2)
             #print( "self.posedirs.shape : ", self.posedirs.shape )
             #print( "lrotmin.shape : ", lrotmin.shape )
-            v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2]))
+            v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2])) + self.v_personal
 
         results = []
         results.append( self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2)) )
@@ -115,19 +151,20 @@ class SMPLModel(nn.Module):
             self.pack(
                 torch.matmul(
                     stacked,
-                    torch.reshape( torch.cat((J, torch.zeros((batch_num, 24, 1), dtype=torch.float32).to(self.device)), dim=2), (batch_num, 24, 4, 1) )
+                    torch.reshape( torch.cat((J, torch.zeros((self.batch_size, 24, 1), dtype=torch.float32).to(self.device)), dim=2), (self.batch_size, 24, 4, 1) )
                 )
             )
 
         # Restart from here
         T = torch.tensordot(results, self.weights, dims=([1], [1])).permute(0, 3, 1, 2)
-        rest_shape_h = torch.cat( (v_posed, torch.ones((batch_num, v_posed.shape[1], 1), dtype=torch.float32).to(self.device)), dim=2 )
-        v = torch.matmul(T, torch.reshape(rest_shape_h, (batch_num, -1, 4, 1)))
-        v = torch.reshape(v, (batch_num, -1, 4))[:, :, :3]
+        rest_shape_h = torch.cat( (v_posed, torch.ones((self.batch_size, v_posed.shape[1], 1), dtype=torch.float32).to(self.device)), dim=2 )
+        v = torch.matmul(T, torch.reshape(rest_shape_h, (self.batch_size, -1, 4, 1)))
+        v = torch.reshape(v, (self.batch_size, -1, 4))[:, :, :3]
         #print( "v.shape : ", v.shape )
+        #print( "trans.shape : ", trans.shape )
 
         # ワールド座標変換
-        result = v + torch.reshape(trans, (batch_num, 1, 3))
+        result = v + torch.reshape(trans, (self.batch_size, 1, 3))
         #print( "result.shape : ", result.shape )
 
         # faces 
@@ -136,7 +173,7 @@ class SMPLModel(nn.Module):
 
         # estimate 3D joint locations
         #joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
-        joints = torch.zeros((batch_num,19,3), requires_grad=False).float().to(self.device)     # dummy
+        joints = torch.zeros((self.batch_size,19,3), requires_grad=False).float().to(self.device)     # dummy
         #print( "joints.shape : ", joints.shape )
 
         return result, faces, joints

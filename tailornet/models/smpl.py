@@ -160,8 +160,8 @@ class SMPLModel(nn.Module):
         rest_shape_h = torch.cat( (v_posed, torch.ones((self.batch_size, v_posed.shape[1], 1), dtype=torch.float32).to(self.device)), dim=2 )
         v = torch.matmul(T, torch.reshape(rest_shape_h, (self.batch_size, -1, 4, 1)))
         v = torch.reshape(v, (self.batch_size, -1, 4))[:, :, :3]
-        print( "v.shape : ", v.shape )
-        print( "trans.shape : ", trans.shape )
+        #print( "v.shape : ", v.shape )
+        #print( "trans.shape : ", trans.shape )
 
         # ワールド座標変換
         result = v + torch.reshape(trans, (self.batch_size, 1, 3))
