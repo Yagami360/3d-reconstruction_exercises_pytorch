@@ -33,11 +33,11 @@ from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
 # 自作モジュール
-from data.tailornet_dataset import TailornetDataset, TailornetDataLoader
+from data.tailornet_dataset import TailornetDataset
 from models.smpl import SMPLModel
 from models.smpl_mgn import SMPLMGNModel
 from models.smpl_tailor import SMPLTailorModel
-from models.tailor_networks import HFLayer
+from models.tailor_networks import TailorNet
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
 from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh_interpenetration
@@ -46,7 +46,7 @@ from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="smpl_g+", help="実験名")
-    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="pant", help="服の種類")
+    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="old-t-shirt_female", help="服の種類")
     parser.add_argument('--gender', choices=['female', 'male', 'neutral'], default="female", help="性別")
     parser.add_argument("--smpl_registration_dir", type=str, default="datasets/smpl_registrations")
     parser.add_argument("--tailornet_dataset_dir", type=str, default="datasets/tailornet_dataset")
@@ -132,7 +132,7 @@ if __name__ == '__main__':
     #================================
     # データセットの読み込み
     #================================
-    ds_test = TailornetDataset( args = args, dataset_dir = args.tailornet_dataset_dir, cloth_type = args.cloth_type, gender = args.gender, debug = args.debug )
+    pass
 
     #================================
     # モデルの生成
@@ -146,25 +146,30 @@ if __name__ == '__main__':
     )
 
     # TailorNet
-    if( os.path.exists( os.path.join(args.load_checkpoints_dir, 'params.json') ) ):
-        with open(os.path.join(args.load_checkpoints_dir, 'params.json')) as jf:
-            tailor_params = json.load(jf)
-    else:
-        with open(os.path.join(args.load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as jf:
-            tailor_params = json.load(jf)
-
-    tailornet_hf = HFLayer( params = tailor_params, n_verts = smpl.cloth_info[args.cloth_type]['vert_indices'].shape[0] * 3 )
+    model = TailorNet( tailornet_dataset_dir = args.tailornet_dataset_dir, load_checkpoints_dir = args.load_checkpoints_dir, cloth_type = args.cloth_type, gender = args.gender, device = device, debug = args.debug ).to(device)
+    print( "model : ", model )
 
     #================================
-    # SMPL でのメッシュ生成
+    # モデルの推論処理
     #================================
     # SMPL 制御パラメータ β,θ の初期化
     betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
     thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
     gammas = torch.from_numpy( (np.random.rand(args.batch_size, 4) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)    
+    print( "thetas.shape : ", thetas.shape )
+    print( "betas.shape : ", betas.shape )
+    print( "gammas.shape : ", gammas.shape )
 
+    model.eval()
+    with torch.no_grad():
+        # 頂点変位を算出
+        cloth_displacements = model( betas, thetas, gammas )
+
+    #================================
     # SMPL でのメッシュ生成
-    verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas, thetas )
+    #================================
+    # SMPL でのメッシュ生成
+    verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas, thetas, cloth_displacements )
 
     # Mesh 型に変換
     mesh_body = Meshes(verts_body, faces_body).to(device)

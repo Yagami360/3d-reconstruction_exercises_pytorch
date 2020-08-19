@@ -11,6 +11,7 @@ rm -rf tensorboard/${EXPER_NAME}
 
 python render.py \
     --exper_name ${EXPER_NAME} \
+    --cloth_type old-t-shirt --gender female \
     --smpl_registration_dir datasets/smpl_registrations \
     --cloth_info_path datasets/tailornet_dataset/garment_class_info.pkl \
     --shader soft_silhouette_shader \

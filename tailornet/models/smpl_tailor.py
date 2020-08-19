@@ -51,6 +51,7 @@ class SMPLTailorModel(SMPLMGNModel):
         if( debug ):
             print( "self.cloth_info.keys() : ", self.cloth_info.keys() )
             print( "self.cloth_info[{}].keys() : {}".format(cloth_type,self.cloth_info[cloth_type].keys()) )
+            print( "self.cloth_info[{}][vert_indices].shape : {}".format(cloth_type,self.cloth_info[cloth_type]["vert_indices"].shape[0]) )
 
         return
 

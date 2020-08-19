@@ -13,9 +13,8 @@ from utils import set_random_seed
 
 
 class TailornetDataset(data.Dataset):
-    def __init__(self, args, dataset_dir, cloth_type = "old-t-shirt", gender = "female", shape_style_pair_list = "avail.txt", debug = False ):
+    def __init__(self, dataset_dir, cloth_type = "old-t-shirt", gender = "female", shape_style_pair_list = "avail.txt", debug = False ):
         super(TailornetDataset, self).__init__()
-        self.args = args
         self.dataset_dir = dataset_dir
         self.cloth_type = cloth_type
         self.debug = debug
