@@ -68,14 +68,15 @@ class SMPLModel(nn.Module):
         self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(self.device)
         if( debug ):
             print( "self.registration_path : ", self.registration_path )            
-            print( "self.J_regressor.shape : ", self.J_regressor.shape )            # torch.Size([24, 6890])
-            print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # torch.Size([24, 6890])
-            print( "self.posedirs.shape : ", self.posedirs.shape )                  # torch.Size([24, 6890])
-            print( "self.v_template.shape : ", self.v_template.shape )              # torch.Size([6890, 3])
+            print( "self.J_regressor.shape : ", self.J_regressor.shape )            # torch.Size([24, V])
+            print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # torch.Size([24, V])
+            print( "self.posedirs.shape : ", self.posedirs.shape )                  # torch.Size([24, V])
+            print( "self.v_template.shape : ", self.v_template.shape )              # torch.Size([V, 3])
+            print( "self.v_personal.shape : ", self.v_personal.shape )              # 
             print( "self.weights.shape : ", self.weights.shape )                    # 
-            print( "self.shapedirs.shape : ", self.shapedirs.shape )                # torch.Size([6890, 3, 10])
+            print( "self.shapedirs.shape : ", self.shapedirs.shape )                # torch.Size([V, 3, 10])
             print( "self.kintree_table.shape : ", self.kintree_table.shape )        # (2, 24)
-            print( "self.faces.shape : ", self.faces.shape )                        # (13776, 3)
+            print( "self.faces.shape : ", self.faces.shape )                        # (F, 3)
 
         return
 
@@ -120,14 +121,14 @@ class SMPLModel(nn.Module):
         #print( "R_cube_big.shape : ", R_cube_big.shape )
 
         if simplify:
-            v_posed = v_shaped
+            v_posed = v_shaped + self.v_personal
         else:
             R_cube = R_cube_big[:, 1:, :, :]
             I_cube = (torch.eye(3, dtype=torch.float32).unsqueeze(dim=0) + torch.zeros((self.batch_size, R_cube.shape[1], 3, 3), dtype=torch.float32)).to(self.device)
             lrotmin = (R_cube - I_cube).reshape(self.batch_size, -1, 1).squeeze(dim=2)
             #print( "self.posedirs.shape : ", self.posedirs.shape )
             #print( "lrotmin.shape : ", lrotmin.shape )
-            v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2]))
+            v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2])) + self.v_personal
 
         results = []
         results.append( self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2)) )
@@ -154,6 +155,7 @@ class SMPLModel(nn.Module):
         v = torch.matmul(T, torch.reshape(rest_shape_h, (self.batch_size, -1, 4, 1)))
         v = torch.reshape(v, (self.batch_size, -1, 4))[:, :, :3]
         print( "v.shape : ", v.shape )
+        print( "trans.shape : ", trans.shape )
 
         # ワールド座標変換
         result = v + torch.reshape(trans, (self.batch_size, 1, 3))

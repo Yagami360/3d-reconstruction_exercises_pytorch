@@ -8,6 +8,9 @@ import torch.nn.functional as F
 
 from data.tailornet_dataset import TailornetDataset
 
+#--------------------------------
+# utils
+#--------------------------------
 # Lists the indices of joints which affect the deformations of particular garment
 VALID_THETA = {
     't-shirt': [0, 1, 2, 3, 6, 9, 12, 13, 14, 16, 17, 18, 19],
@@ -87,9 +90,34 @@ class FullyConnected(nn.Module):
         return self.net(x)
 
 #--------------------------------
-# HF（高周波）メッシュ生成器
+# TailorNet のサブネットワーク
 #--------------------------------
+class TailorNetLF(nn.Module):
+    """
+    LF（低周波）メッシュ生成器
+    """
+    def __init__(self, params, n_verts ):
+        super(TailorNetLF, self).__init__()
+        self.params = params
+        self.cloth_type = params['garment_class']
+
+        self.mlp = FullyConnected(
+            input_size = 72+10+4, output_size = n_verts, 
+            hidden_size = params['hidden_size'] if 'hidden_size' in params else 1024, 
+            num_layers = params['num_layers'] if 'num_layers' in params else 3
+        )
+        return
+
+    def forward(self, thetas, betas, gammas):
+        thetas, betas, gammas = mask_inputs(thetas, betas, gammas, cloth_type=self.cloth_type)
+        pred_verts = self.mlp(torch.cat((thetas, betas, gammas), dim=1))
+        return pred_verts
+
+
 class TailorNetHF(nn.Module):
+    """
+    HF（高周波）メッシュ生成器
+    """
     def __init__(self, params, n_verts ):
         super(TailorNetHF, self).__init__()
         self.params = params
@@ -108,10 +136,10 @@ class TailorNetHF(nn.Module):
         pred_verts = self.mlp(thetas)
         return pred_verts
 
-#--------------------------------
-# ϕ=(γ,β) から頂点変位 D への写像を行う MLP / MLP(beta, gammas) / ss2g
-#--------------------------------
 class TailorNetSS2G(nn.Module):
+    """
+    ϕ=(γ,β) から頂点変位 D への写像を行う MLP / MLP(beta, gammas) / ss2g
+    """
     def __init__(self, params, n_verts ):
         super(TailorNetSS2G, self).__init__()
         self.params = params
@@ -134,18 +162,32 @@ class TailorNetSS2G(nn.Module):
 # TailorNet
 #--------------------------------
 class TailorNet(nn.Module):
-    def __init__(self, tailornet_dataset_dir, load_checkpoints_dir, cloth_type = "old-t-shirt", gender = "female", device = torch.device("cpu"), debug = False ):
+    def __init__(self, tailornet_dataset_dir, load_checkpoints_dir, cloth_type = "old-t-shirt", gender = "female", kernel_sigma = 0.01, device = torch.device("cpu"), debug = False ):
         super(TailorNet, self).__init__()
         self.tailornet_dataset_dir = tailornet_dataset_dir
         self.load_checkpoints_dir = load_checkpoints_dir
         self.cloth_type = cloth_type
         self.gender = gender
+        self.kernel_sigma = kernel_sigma
         self.device = device
         self.debug = debug
 
         # 
         dataset = TailornetDataset( dataset_dir = tailornet_dataset_dir, cloth_type = cloth_type, gender = gender, shape_style_pair_list = "pivots.txt", debug = debug )
         self.basis = dataset.unpose_v.to(self.device)
+
+        #------------------
+        # lf layers
+        #------------------
+        # load parames
+        if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_lf".format(cloth_type, gender), 'params.json') ) ):
+            with open(os.path.join(load_checkpoints_dir, 'params.json')) as f:
+                params = json.load(f)
+        else:
+            with open(os.path.join(load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as f:
+                params = json.load(f)
+
+        self.tailornet_lf = TailorNetLF(params=params, n_verts=dataset.unpose_v.shape[1] * 3).to(device)
 
         #------------------
         # hf layers
@@ -167,7 +209,7 @@ class TailorNet(nn.Module):
         # ϕ=(γ,β) から頂点変位 D への写像を行う MLP
         #------------------
         # load parames
-        if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_ss2g".format(cloth_type, gender), "{}_{}".format(shape_idx,style_idx), 'params.json') ) ):
+        if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_ss2g".format(cloth_type, gender), 'params.json') ) ):
             with open(os.path.join(load_checkpoints_dir, 'params.json')) as f:
                 params = json.load(f)
         else:
@@ -186,23 +228,35 @@ class TailorNet(nn.Module):
         for tailornet_hf in self.tailornet_hfs:
              hf_str += str(tailornet_hf) + "\n"
 
-        return self.__class__.__name__ + '\n' + hf_str + "\n" + str(self.tailornet_kernel)
+        return self.__class__.__name__ + '\n' + str(self.tailornet_lf) + '\n' + hf_str + "\n" + str(self.tailornet_ss2g)
 
     def eval(self):
+        self.tailornet_lf.eval()
         _ = [ tailornet_hf.eval() for tailornet_hf in self.tailornet_hfs ]
+        self.tailornet_ss2g.eval()
         return
 
     def forward(self, betas, thetas, gammas, ret_separate = False):
+        batch_size = thetas.shape[0]
+        # 低周波形状を計算
+        pred_disp_lf = self.tailornet_lf.forward(thetas, betas, gammas).view(batch_size, -1, 3)
+        #print( "pred_disp_lf : ", pred_disp_lf )
+
+        # 高周波形状を計算
         pred_disp_hf_pivot = torch.stack([
-            tailornet_hf.forward(thetas, betas, gammas).view(thetas.shape[0], -1, 3) for tailornet_hf in self.tailornet_hfs
+            tailornet_hf.forward(thetas, betas, gammas).view(batch_size, -1, 3) for tailornet_hf in self.tailornet_hfs
         ]).transpose(0, 1)
+        #print( "pred_disp_hf_pivot : ", pred_disp_hf_pivot )
         #print( "pred_disp_hf_pivot.shape : ", pred_disp_hf_pivot.shape)     # torch.Size([1, 20, V, 3])
 
-        # 高周波形状をカーネル関数で重み付け
-        pred_disp_hf = self.interp4(thetas, betas, gammas, pred_disp_hf_pivot, sigma=0.01)
+        # 高周波形状をカーネル関数で重み付け和
+        pred_disp_hf = self.interp4(thetas, betas, gammas, pred_disp_hf_pivot, sigma = self.kernel_sigma )
         #print( "pred_disp_hf.shape : ", pred_disp_hf.shape)                 # torch.Size([1, V, 3])
+        #print( "pred_disp_hf : ", pred_disp_hf )
 
-        return pred_disp_hf
+        # 低周波成分 + 高周波成分
+        pred_disp = pred_disp_lf + pred_disp_hf
+        return pred_disp
 
     def interp4(self, thetas, betas, gammas, pred_disp_pivot, sigma=0.5):
         """
@@ -211,16 +265,20 @@ class TailorNet(nn.Module):
         # disp for given shape-style in canon pose
         bs = pred_disp_pivot.shape[0]
         rest_verts = self.tailornet_ss2g.forward(betas=betas, gammas=gammas).view(bs, -1, 3)
-        # distance of given shape-style from pivots in terms of displacement
-        # difference in canon pose
-
+        #print( "rest_verts : ", rest_verts )        
+        #print( "self.basis : ", self.basis )
         #print( "rest_verts.shape : ", rest_verts.shape )
         #print( "self.basis.shape : ", self.basis.shape )
+
+        # distance of given shape-style from pivots in terms of displacement
+        # difference in canon pose
         dist = rest_verts.unsqueeze(1) - self.basis.unsqueeze(0)
         dist = (dist ** 2).sum(-1).mean(-1) * 1000.
+        #print( "dist : ", dist )
 
         # compute normalized RBF distance
         weight = torch.exp(-dist/sigma)
+        #print( "weight : ", weight )
         weight = weight / weight.sum(1, keepdim=True)
 
         # interpolate using weights

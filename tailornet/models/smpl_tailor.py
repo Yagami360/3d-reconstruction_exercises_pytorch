@@ -42,7 +42,7 @@ class SMPLTailorModel(SMPLMGNModel):
             cloth_type = cloth_type,
             batch_size = batch_size, 
             device = device,
-            debug = False
+            debug = debug
         )
         self.cloth_info_path = cloth_info_path
         with open(self.cloth_info_path, 'rb') as f:
@@ -68,7 +68,7 @@ class SMPLTailorModel(SMPLMGNModel):
         """
         verts_indices_cloth = self.cloth_info[self.cloth_type]['vert_indices'].tolist()
         if( cloth_displacements is not None ):
-            self.v_personal[:,verts_indices_cloth,:] = cloth_displacements
+            self.v_personal[verts_indices_cloth] = cloth_displacements
 
         # SMPL 裸体メッシュの生成
         verts_body, faces_body, joints_body = super().forward(betas, thetas, trans, simplify)

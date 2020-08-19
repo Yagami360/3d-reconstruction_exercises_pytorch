@@ -51,6 +51,7 @@ if __name__ == '__main__':
     parser.add_argument("--smpl_registration_dir", type=str, default="datasets/smpl_registrations")
     parser.add_argument("--tailornet_dataset_dir", type=str, default="datasets/tailornet_dataset")
     parser.add_argument("--cloth_info_path", type=str, default="datasets/tailornet_dataset/garment_class_info.pkl")
+    parser.add_argument("--kernel_sigma", type=float, default=0.01 )
     parser.add_argument("--texture_path", type=str, default="")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
@@ -146,16 +147,29 @@ if __name__ == '__main__':
     )
 
     # TailorNet
-    model = TailorNet( tailornet_dataset_dir = args.tailornet_dataset_dir, load_checkpoints_dir = args.load_checkpoints_dir, cloth_type = args.cloth_type, gender = args.gender, device = device, debug = args.debug ).to(device)
+    model = TailorNet( 
+        tailornet_dataset_dir = args.tailornet_dataset_dir, 
+        load_checkpoints_dir = args.load_checkpoints_dir, 
+        cloth_type = args.cloth_type, gender = args.gender, 
+        kernel_sigma = args.kernel_sigma,
+        device = device, debug = args.debug
+    ).to(device)
     print( "model : ", model )
 
     #================================
     # モデルの推論処理
     #================================
     # SMPL 制御パラメータ β,θ の初期化
-    betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
-    thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
-    gammas = torch.from_numpy( (np.random.rand(args.batch_size, 4) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)    
+    betas = torch.from_numpy( np.zeros((args.batch_size,10)) ).float().requires_grad_(False).to(device)
+    #thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
+    thetas = torch.from_numpy( np.zeros((args.batch_size,72)) ).float().requires_grad_(False).to(device)
+    gammas = torch.from_numpy( np.zeros((args.batch_size,4) ) ).float().requires_grad_(False).to(device)
+    for b in range(gammas.shape[0]):
+        gammas[b][0] = 1.5
+        gammas[b][1] = 0.5
+        gammas[b][2] = 1.5
+        gammas[b][3] = 0.0        
+
     print( "thetas.shape : ", thetas.shape )
     print( "betas.shape : ", betas.shape )
     print( "gammas.shape : ", gammas.shape )
@@ -164,12 +178,15 @@ if __name__ == '__main__':
     with torch.no_grad():
         # 頂点変位を算出
         cloth_displacements = model( betas, thetas, gammas )
+        print( "cloth_displacements.shape : ", cloth_displacements.shape )
+        print( "cloth_displacements : ", cloth_displacements )
+        print( "[cloth_displacements] min={}, max={}, sum={}".format(torch.min(cloth_displacements), torch.max(cloth_displacements), torch.sum(cloth_displacements)) )
 
     #================================
     # SMPL でのメッシュ生成
     #================================
     # SMPL でのメッシュ生成
-    verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas, thetas, cloth_displacements )
+    verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas = betas, thetas = thetas, cloth_displacements = cloth_displacements )
 
     # Mesh 型に変換
     mesh_body = Meshes(verts_body, faces_body).to(device)

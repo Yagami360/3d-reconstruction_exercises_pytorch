@@ -27,7 +27,7 @@ class SMPLMGNModel(SMPLModel):
         batch_size = 1, 
         device = torch.device("cpu"), debug = False
     ):
-        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug = False)
+        super(SMPLMGNModel, self).__init__(registration_path, batch_size, device, debug = debug)
         self.digital_wardrobe_registration_path = digital_wardrobe_registration_path
         self.cloth_smpl_fts_path = cloth_smpl_fts_path
         self.cloth_type = cloth_type
@@ -40,6 +40,8 @@ class SMPLMGNModel(SMPLModel):
         #print( "hres_verts.shape={}, hres_faces.shape={}  : ".format(hres_verts.shape, hres_faces.shape) )
 
         self.v_template = torch.from_numpy(hres_verts).float().requires_grad_(False).to(device)
+        self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
+
         self.faces = hres_faces
         self.weights = torch.from_numpy(
             np.hstack([
@@ -107,6 +109,7 @@ class SMPLMGNModel(SMPLModel):
             print( "self.joint_regressor.shape : ", self.joint_regressor.shape )    # 
             print( "self.posedirs.shape : ", self.posedirs.shape )                  # 
             print( "self.v_template.shape : ", self.v_template.shape )              # 
+            print( "self.v_personal.shape : ", self.v_personal.shape )              # 
             print( "self.weights.shape : ", self.weights.shape )                    # 
             print( "self.shapedirs.shape : ", self.shapedirs.shape )                # 
             print( "self.kintree_table.shape : ", self.kintree_table.shape )        # 
@@ -120,8 +123,10 @@ class SMPLMGNModel(SMPLModel):
             #print( "self.trans : ", self.trans )
             print( "self.gender : ", self.gender )
 
-            print( "self.vert_indices.shape : ", self.vert_indices.shape )
-            print( "self.fts.shape : ", self.fts.shape )
+            if( self.vert_indices is not None ):
+                print( "self.vert_indices.shape : ", self.vert_indices.shape )
+            if( self.fts is not None ):
+                print( "self.fts.shape : ", self.fts.shape )
             #print( "self.vert_indices : ", self.vert_indices )
             #print( "self.fts : ", self.fts )
 
