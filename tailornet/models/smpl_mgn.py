@@ -32,16 +32,17 @@ class SMPLMGNModel(SMPLModel):
         self.cloth_smpl_fts_path = cloth_smpl_fts_path
         self.cloth_type = cloth_type
 
-        # メッシュを高解像度化したパラメーターを設定
-        #mesh = Meshes(self.v_template.unsqueeze(0), self.faces.reshape(1,self.faces.shape[0],self.faces.shape[1]))
-        #mesh = Meshes(self.v_template.unsqueeze(0), torch.from_numpy(self.faces).uint().requires_grad_(False).to(device).unsqueeze(0))
-                
+        #----------------------------
+        # メッシュを高解像度化
+        #----------------------------
         hres_verts, hres_faces, mapping = upsampling_mesh(self.v_template.detach().cpu().numpy(), self.faces)
         #print( "hres_verts.shape={}, hres_faces.shape={}  : ".format(hres_verts.shape, hres_faces.shape) )
 
+        #----------------------------------------------------------
+        # 高解像度化したメッシュを元に smpl registration param を再生成
+        #----------------------------------------------------------
         self.v_template = torch.from_numpy(hres_verts).float().requires_grad_(False).to(device)
         self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
-
         self.faces = hres_faces
         self.weights = torch.from_numpy(
             np.hstack([
@@ -72,7 +73,9 @@ class SMPLMGNModel(SMPLModel):
         self.posedirs = torch.from_numpy(mapping.dot(self.posedirs.detach().cpu().numpy().reshape((-1, 207))).reshape(-1, 3, 207)).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(mapping.dot(self.shapedirs.detach().cpu().numpy().reshape((-1, self.shapedirs.shape[-1]))).reshape(-1, 3, self.shapedirs.shape[-1])).float().requires_grad_(False).to(device)
 
+        #----------------------------------------------------------
         # digital_wardrobe にある betas, thetas を保管した registration file からデータを抽出
+        #----------------------------------------------------------
         if( os.path.exists(self.digital_wardrobe_registration_path) ):
             with open(self.digital_wardrobe_registration_path, 'rb') as f:
                 params = pickle.load(f, encoding='latin1')
@@ -89,7 +92,9 @@ class SMPLMGNModel(SMPLModel):
             self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(device)
             self.gender = "female"
 
+        #----------------------------------------------------------
         # SMPL 人体メッシュと服メッシュの一致する頂点番号を保管した registration file からデータを抽出
+        #----------------------------------------------------------
         if( os.path.exists(self.digital_wardrobe_registration_path) ):
             with open(self.cloth_smpl_fts_path, 'rb') as f:
                 vert_indices, fts = pickle.load(f, encoding='latin1')

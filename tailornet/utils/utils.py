@@ -45,7 +45,11 @@ def load_checkpoint(model, device, checkpoint_path, strict=True):
     if not os.path.exists(checkpoint_path):
         return
         
-    model.load_state_dict(torch.load(checkpoint_path), strict)
+    if torch.cuda.is_available():
+        model.load_state_dict(torch.load(checkpoint_path), strict)
+    else:
+        model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"), strict)
+
     model.to(device)
     return
 

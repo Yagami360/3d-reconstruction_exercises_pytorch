@@ -16,7 +16,7 @@ from pytorch3d.structures import Meshes
 # 自作モジュール
 from models.smpl import SMPLModel
 from models.smpl_mgn import SMPLMGNModel
-from utils.mesh import upsampling_mesh
+from utils.mesh import upsampling_mesh, remove_mesh_interpenetration
 
 class SMPLTailorModel(SMPLMGNModel):
     def __init__( 
@@ -76,5 +76,11 @@ class SMPLTailorModel(SMPLMGNModel):
         # 服メッシュの生成
         verts_cloth = verts_body[:,verts_indices_cloth,:]
         faces_cloth = torch.from_numpy(self.cloth_info[self.cloth_type]['f']).int().unsqueeze(0).requires_grad_(False).to(self.device)
-        return verts_body, faces_body, joints_body, verts_cloth, faces_cloth
+
+        # remove_mesh_interpenetration
+        mesh_body = Meshes(verts_body, faces_body).to(self.device)
+        mesh_cloth = Meshes(verts_cloth, faces_cloth).to(self.device)
+        mesh_cloth = remove_mesh_interpenetration( mesh_cloth, mesh_body )
+
+        return mesh_body, mesh_cloth
 

@@ -14,21 +14,24 @@ class SMPLModel(nn.Module):
         self.registration_path = registration_path
         self.batch_size = batch_size
 
+        #----------------------------
         # registration の読み込み        
+        #----------------------------
         with open(self.registration_path, 'rb') as f:
             # encoding='latin1' : python2 で書き込まれた pickle を python3 で読み込むときに必要 / 要 chumpy
             params = pickle.load(f, encoding='latin1')
             if( debug ):
                 print( "params.keys() :\n", params.keys() ) # dict_keys(['J_regressor_prior', 'f', 'J_regressor', 'kintree_table', 'J', 'weights_prior', 'weights', 'vert_sym_idxs', 'posedirs', 'pose_training_info', 'bs_style', 'v_template', 'shapedirs', 'bs_type'])
 
-        # registration からデータを抽出
+        #--------------------------------------
+        # smpl registration param を抽出
+        #--------------------------------------
         self.weights = torch.from_numpy(np.array(params['weights'])).float().requires_grad_(False).to(device)
         self.posedirs = torch.from_numpy(np.array(params['posedirs'])).float().requires_grad_(False).to(device)
         self.v_template = torch.from_numpy(np.array(params['v_template'])).float().requires_grad_(False).to(device)
         self.shapedirs = torch.from_numpy(np.array(params['shapedirs'])).float().requires_grad_(False).to(device)
         self.kintree_table = params['kintree_table']
         self.faces = np.array(params['f'])
-
 
         self.J_reg_csr = params['J_regressor'].asformat('csr')
         #self.J_regressor = torch.from_numpy(np.array(params['J_regressor'].todense())).float().requires_grad_(False).to(device)
@@ -63,6 +66,9 @@ class SMPLModel(nn.Module):
         else:
             self.v_personal = torch.zeros( (self.v_template.shape), requires_grad=False).float().to(device)
 
+        #-------------------------------
+        # SMPL 制御パラメータ初期化
+        #-------------------------------
         self.betas = torch.zeros( (self.batch_size, 10), requires_grad=False).float().to(device)
         self.thetas = torch.zeros( (self.batch_size, 72), requires_grad=False).float().to(device)
         self.trans = torch.from_numpy(np.zeros((self.batch_size, 3))).float().requires_grad_(False).to(self.device)

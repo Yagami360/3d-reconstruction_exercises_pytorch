@@ -14,7 +14,7 @@ python render.py \
     --cloth_type old-t-shirt --gender female \
     --smpl_registration_dir datasets/smpl_registrations \
     --cloth_info_path datasets/tailornet_dataset/garment_class_info.pkl \
-    --kernel_sigma 0.1 \
+    --kernel_sigma 0.01 \
     --shader soft_silhouette_shader \
     --debug
 

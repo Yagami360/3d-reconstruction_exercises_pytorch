@@ -8,6 +8,8 @@ import torch.nn.functional as F
 
 from data.tailornet_dataset import TailornetDataset
 
+from utils.utils import load_checkpoint
+
 #--------------------------------
 # utils
 #--------------------------------
@@ -133,7 +135,9 @@ class TailorNetHF(nn.Module):
     def forward(self, thetas, betas=None, gammas=None):
         #print( "[{}] thetas.shape={}".format(self.__class__.__name__, thetas.shape) )
         thetas = mask_thetas(thetas=thetas, cloth_type=self.cloth_type)
+        #print( "[thetas] sum={}".format(torch.sum(thetas)) )    # sum= -0.34928515553474426
         pred_verts = self.mlp(thetas)
+        #print( "[pred_verts] sum={}".format(torch.sum(pred_verts)) )    # sum=0.7465648651123047
         return pred_verts
 
 class TailorNetSS2G(nn.Module):
@@ -180,8 +184,9 @@ class TailorNet(nn.Module):
         # lf layers
         #------------------
         # load parames
-        if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_lf".format(cloth_type, gender), 'params.json') ) ):
-            with open(os.path.join(load_checkpoints_dir, 'params.json')) as f:
+        file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_lf/{}_{}".format(cloth_type, gender, cloth_type, gender), 'params.json')
+        if( os.path.exists(file_path) ):
+            with open(file_path) as f:
                 params = json.load(f)
         else:
             with open(os.path.join(load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as f:
@@ -189,34 +194,53 @@ class TailorNet(nn.Module):
 
         self.tailornet_lf = TailorNetLF(params=params, n_verts=dataset.unpose_v.shape[1] * 3).to(device)
 
+        # load checkpoints
+        file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_lf/{}_{}".format(cloth_type, gender, cloth_type, gender), 'lin.pth.tar')
+        if( os.path.exists(file_path) ):
+            load_checkpoint(self.tailornet_lf.mlp, device, file_path )
+
         #------------------
         # hf layers
         #------------------
         self.tailornet_hfs = []
         for shape_idx, style_idx in dataset.shape_style_pairs:
             # load parames
-            if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_hf".format(cloth_type, gender), "{}_{}".format(shape_idx,style_idx), 'params.json') ) ):
-                with open(os.path.join(load_checkpoints_dir, 'params.json')) as f:
+            file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_hf/{}_{}".format(cloth_type, gender, cloth_type, gender), "{}_{}".format(shape_idx,style_idx), 'params.json')
+            if( os.path.exists(file_path) ):
+                with open(file_path) as f:
                     params = json.load(f)
             else:
                 with open(os.path.join(load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as f:
                     params = json.load(f)
 
             # define HF Layer
-            self.tailornet_hfs.append( TailorNetHF(params=params, n_verts=dataset.unpose_v.shape[1] * 3).to(device) )
+            tailornet_hf = TailorNetHF(params=params, n_verts=dataset.unpose_v.shape[1] * 3).to(device)
+
+            # load checkpoints
+            file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_hf/{}_{}".format(cloth_type, gender, cloth_type, gender), "{}_{}".format(shape_idx,style_idx), 'lin.pth.tar')
+            if( os.path.exists(file_path) ):
+                load_checkpoint(tailornet_hf.mlp, device, file_path)
+
+            self.tailornet_hfs.append(tailornet_hf)
 
         #------------------
         # ϕ=(γ,β) から頂点変位 D への写像を行う MLP
         #------------------
         # load parames
-        if( os.path.exists( os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_ss2g".format(cloth_type, gender), 'params.json') ) ):
-            with open(os.path.join(load_checkpoints_dir, 'params.json')) as f:
+        file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_ss2g/{}_{}".format(cloth_type, gender, cloth_type, gender), 'params.json')
+        if( os.path.exists(file_path) ):
+            with open(file_path) as f:
                 params = json.load(f)
         else:
             with open(os.path.join(load_checkpoints_dir, "tn_orig_baseline/t-shirt_female", 'params.json')) as f:
                 params = json.load(f)
 
         self.tailornet_ss2g = TailorNetSS2G(params=params, n_verts=dataset.unpose_v.shape[1] * 3).to(device)
+
+        # load checkpoints
+        file_path = os.path.join(load_checkpoints_dir, "{}_{}_weights/tn_orig_ss2g/{}_{}".format(cloth_type, gender, cloth_type, gender), 'lin.pth.tar')
+        if( os.path.exists(file_path) ):
+            load_checkpoint(self.tailornet_ss2g.mlp, device, file_path)
 
         if( debug ):
             print( "len(self.tailornet_hfs)", len(self.tailornet_hfs) )
@@ -236,11 +260,8 @@ class TailorNet(nn.Module):
         self.tailornet_ss2g.eval()
         return
 
-    def forward(self, betas, thetas, gammas, ret_separate = False):
+    def forward(self, betas, thetas, gammas):
         batch_size = thetas.shape[0]
-        # 低周波形状を計算
-        pred_disp_lf = self.tailornet_lf.forward(thetas, betas, gammas).view(batch_size, -1, 3)
-        #print( "pred_disp_lf : ", pred_disp_lf )
 
         # 高周波形状を計算
         pred_disp_hf_pivot = torch.stack([
@@ -248,11 +269,17 @@ class TailorNet(nn.Module):
         ]).transpose(0, 1)
         #print( "pred_disp_hf_pivot : ", pred_disp_hf_pivot )
         #print( "pred_disp_hf_pivot.shape : ", pred_disp_hf_pivot.shape)     # torch.Size([1, 20, V, 3])
+        #print( "[pred_disp_hf_pivot] sum = {}".format(torch.sum(pred_disp_hf_pivot)) )    # sum = 18.1131591796875
 
         # 高周波形状をカーネル関数で重み付け和
         pred_disp_hf = self.interp4(thetas, betas, gammas, pred_disp_hf_pivot, sigma = self.kernel_sigma )
         #print( "pred_disp_hf.shape : ", pred_disp_hf.shape)                 # torch.Size([1, V, 3])
         #print( "pred_disp_hf : ", pred_disp_hf )
+        #print( "[pred_disp_hf] sum = {}".format(torch.sum(pred_disp_hf)) )    # sum = 0.03325019031763077 -> nan
+
+        # 低周波形状を計算
+        pred_disp_lf = self.tailornet_lf.forward(thetas, betas, gammas).view(batch_size, -1, 3)
+        #print( "pred_disp_lf : ", pred_disp_lf )
 
         # 低周波成分 + 高周波成分
         pred_disp = pred_disp_lf + pred_disp_hf
@@ -269,6 +296,8 @@ class TailorNet(nn.Module):
         #print( "self.basis : ", self.basis )
         #print( "rest_verts.shape : ", rest_verts.shape )
         #print( "self.basis.shape : ", self.basis.shape )
+        #print( "sum(rest_verts) : ", torch.sum(rest_verts) )    # tensor(-46.7538)
+        #print( "sum(self.basis) : ", torch.sum(self.basis) )    # tensor(-769.6298)
 
         # distance of given shape-style from pivots in terms of displacement
         # difference in canon pose

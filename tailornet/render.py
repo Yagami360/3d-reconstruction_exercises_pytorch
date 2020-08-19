@@ -37,11 +37,11 @@ from data.tailornet_dataset import TailornetDataset
 from models.smpl import SMPLModel
 from models.smpl_mgn import SMPLMGNModel
 from models.smpl_tailor import SMPLTailorModel
+from models.smpl_tailor2 import SMPLTailorModel2
 from models.tailor_networks import TailorNet
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
-from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh_interpenetration
-
+from utils.mesh import normalize_y_rotation
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -138,14 +138,22 @@ if __name__ == '__main__':
     #================================
     # モデルの生成
     #================================
-    # SMPL 
+    # SMPL
     smpl = SMPLTailorModel( 
         smpl_registration_dir = args.smpl_registration_dir, 
         cloth_info_path = args.cloth_info_path,
         cloth_type = args.cloth_type, gender = args.gender,
         batch_size = args.batch_size, device = device, debug = args.debug
     )
-
+    """
+    smpl = SMPLTailorModel2( 
+        smpl_registration_dir = args.smpl_registration_dir, 
+        cloth_info_path = args.cloth_info_path,
+        cloth_type = args.cloth_type, gender = args.gender,
+        batch_size = args.batch_size, device = device, debug = args.debug
+    ).to(device)
+    """
+    
     # TailorNet
     model = TailorNet( 
         tailornet_dataset_dir = args.tailornet_dataset_dir, 
@@ -161,8 +169,17 @@ if __name__ == '__main__':
     #================================
     # SMPL 制御パラメータ β,θ の初期化
     betas = torch.from_numpy( np.zeros((args.batch_size,10)) ).float().requires_grad_(False).to(device)
-    #thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
+    for b in range(betas.shape[0]):
+        betas[b][0] = 2.0
+        betas[b][1] = 2.0
+    
     thetas = torch.from_numpy( np.zeros((args.batch_size,72)) ).float().requires_grad_(False).to(device)
+    thetas_file_path = os.path.join(args.tailornet_dataset_dir, "some_thetas.npy")
+    if( os.path.exists(thetas_file_path) ):
+        which = 0
+        for b in range(thetas.shape[0]):
+            thetas[b] = torch.from_numpy( normalize_y_rotation(np.load(thetas_file_path)[which]) ).float().requires_grad_(False).to(device)
+        
     gammas = torch.from_numpy( np.zeros((args.batch_size,4) ) ).float().requires_grad_(False).to(device)
     for b in range(gammas.shape[0]):
         gammas[b][0] = 1.5
@@ -170,9 +187,16 @@ if __name__ == '__main__':
         gammas[b][2] = 1.5
         gammas[b][3] = 0.0        
 
-    print( "thetas.shape : ", thetas.shape )
     print( "betas.shape : ", betas.shape )
+    print( "thetas.shape : ", thetas.shape )
     print( "gammas.shape : ", gammas.shape )
+    print( "[thetas] sum={}".format(torch.sum(thetas)) )    # sum=-0.30397236347198486
+    print( "[betas] sum={}".format(torch.sum(betas)) )      # sum=4.0
+    print( "[gammas] sum={}".format(torch.sum(gammas)) )    # sum=1.5
+
+    #print( "betas : ", betas )
+    #print( "thetas : ", thetas )
+    #print( "gammas : ", gammas )
 
     model.eval()
     with torch.no_grad():
@@ -186,11 +210,7 @@ if __name__ == '__main__':
     # SMPL でのメッシュ生成
     #================================
     # SMPL でのメッシュ生成
-    verts_body, faces_body, joints_body, verts_cloth, faces_cloth = smpl( betas = betas, thetas = thetas, cloth_displacements = cloth_displacements )
-
-    # Mesh 型に変換
-    mesh_body = Meshes(verts_body, faces_body).to(device)
-    mesh_cloth = Meshes(verts_cloth, faces_cloth).to(device)
+    mesh_body, mesh_cloth = smpl( betas = betas, thetas = thetas, cloth_displacements = cloth_displacements )
     print( "[mesh_body] num_verts={}, num_faces={}".format(mesh_body.num_verts_per_mesh(),mesh_body.num_faces_per_mesh()) )
     print( "[mesh_cloth] num_verts={}, num_faces={}".format(mesh_cloth.num_verts_per_mesh(),mesh_cloth.num_faces_per_mesh()) )
     if( args.shader == "soft_phong_shader" ):
@@ -203,8 +223,8 @@ if __name__ == '__main__':
         texture = Textures(verts_rgb=verts_rgb_colors)
         mesh_cloth.textures = texture
 
-    save_mesh_obj( verts_body[0], faces_body[0], os.path.join(args.results_dir, args.exper_name, "mesh_body.obj" ) )
-    save_mesh_obj( verts_cloth[0], faces_cloth[0], os.path.join(args.results_dir, args.exper_name, "mesh_cloth.obj" ) )
+    save_mesh_obj( mesh_body.verts_packed(), mesh_body.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_body.obj" ) )
+    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth.obj" ) )
 
     #================================
     # レンダリングパイプラインの構成
