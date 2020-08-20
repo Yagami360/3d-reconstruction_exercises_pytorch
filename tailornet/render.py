@@ -42,11 +42,10 @@ from utils.mesh import normalize_y_rotation
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="smpl_g+", help="実験名")
-    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="old-t-shirt_female", help="服の種類")
+    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="old-t-shirt", help="服の種類")
     parser.add_argument('--gender', choices=['female', 'male', 'neutral'], default="female", help="性別")
     parser.add_argument("--smpl_registration_dir", type=str, default="datasets/smpl_registrations")
     parser.add_argument("--tailornet_dataset_dir", type=str, default="datasets/tailornet_dataset")
-    parser.add_argument("--cloth_info_path", type=str, default="datasets/tailornet_dataset/garment_class_info.pkl")
     parser.add_argument("--kernel_sigma", type=float, default=0.01 )
     parser.add_argument("--texture_path", type=str, default="")
     parser.add_argument("--results_dir", type=str, default="results")
@@ -139,7 +138,6 @@ if __name__ == '__main__':
         smpl_registration_dir = args.smpl_registration_dir, 
         tailornet_dataset_dir = args.tailornet_dataset_dir,
         load_checkpoints_dir = args.load_checkpoints_dir,
-        cloth_info_path = args.cloth_info_path,
         cloth_type = args.cloth_type, 
         gender = args.gender,
         batch_size = args.batch_size, 

@@ -123,7 +123,7 @@ class SMPLModel(nn.Module):
         J = torch.matmul(self.J_regressor, v_shaped)
 
         # SMPL の人物姿勢パラメータ theta による頂点 v の変形
-        R_cube_big = self.rodrigues(thetas.view(-1, 1, 3)).reshape(self.batch_size, -1, 3, 3)
+        R_cube_big = self.rodrigues(thetas.view(-1, 1, 3), device = self.device).reshape(self.batch_size, -1, 3, 3)
         #print( "R_cube_big.shape : ", R_cube_big.shape )
 
         if simplify:
@@ -179,7 +179,7 @@ class SMPLModel(nn.Module):
         return result, faces, joints
 
     @staticmethod
-    def rodrigues(r):
+    def rodrigues(r, device):
         """
         Rodrigues' rotation formula that turns axis-angle tensor into rotation
         matrix in a batch-ed manner.
@@ -191,7 +191,9 @@ class SMPLModel(nn.Module):
         Rotation matrix of shape [batch_size * angle_num, 3, 3].
         """
         eps = r.clone().normal_(std=1e-8)
-        theta = torch.norm(r + eps, dim=(1, 2), keepdim=True)  # dim cannot be tuple
+
+        # 一時的に cpu で実行
+        theta = torch.norm(r.cpu() + eps.cpu(), dim=(1, 2), keepdim=True).to(device)  # dim cannot be tuple
         theta_dim = theta.shape[0]
         r_hat = r / theta
         cos = torch.cos(theta)

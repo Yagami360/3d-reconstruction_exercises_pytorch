@@ -25,7 +25,6 @@ class SMPLTailorModel(SMPLModel):
         smpl_registration_dir,                  #
         tailornet_dataset_dir,
         load_checkpoints_dir,
-        cloth_info_path,                        #
         cloth_type = "old-t-shirt",
         gender = "female",
         batch_size = 1, 
@@ -97,8 +96,7 @@ class SMPLTailorModel(SMPLModel):
         #----------------------------------------------------------
         # cloth_info_path : SMPL裸体人体メッシュと服メッシュの対応頂点 index 
         #----------------------------------------------------------
-        self.cloth_info_path = cloth_info_path
-        with open(self.cloth_info_path, 'rb') as f:
+        with open( os.path.join(tailornet_dataset_dir, "garment_class_info.pkl" ), 'rb') as f:
             self.cloth_info = pickle.load(f)
 
         if( debug ):
@@ -169,7 +167,7 @@ class SMPLTailorModel(SMPLModel):
         #-------------------------
         mesh_body = Meshes(verts_body, faces_body).to(self.device)
         mesh_cloth = Meshes(verts_cloth, faces_cloth).to(self.device)
-        mesh_cloth = remove_mesh_interpenetration( mesh_cloth, mesh_body )
+        mesh_cloth = remove_mesh_interpenetration( mesh_cloth, mesh_body, device = self.device )
 
         return mesh_body, mesh_cloth
 

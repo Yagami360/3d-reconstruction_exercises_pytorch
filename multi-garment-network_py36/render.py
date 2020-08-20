@@ -191,7 +191,7 @@ if __name__ == '__main__':
     save_mesh_obj( mesh_body_repose.verts_packed(), mesh_body_repose.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_body_repose.obj" ) )
 
     # Laplacian deformation による衣装テンプレートメッシュの変形
-    mesh_cloth_interp = remove_mesh_interpenetration(mesh_cloth_repose, mesh_body_repose)
+    mesh_cloth_interp = remove_mesh_interpenetration(mesh_cloth_repose, mesh_body_repose, device = device )
     save_mesh_obj( mesh_cloth_interp.verts_packed(), mesh_cloth_interp.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_interp.obj" ) )
 
     #================================

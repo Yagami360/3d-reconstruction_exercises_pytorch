@@ -61,9 +61,9 @@ def deform_mesh_by_closest_vertices( mesh, src_mesh, tar_mesh, device = torch.de
 
     # pytorch3d -> psbody.mesh への変換
     mesh_face_pytorch3d = mesh.faces_packed()
-    mesh = Mesh( mesh.verts_packed(), mesh.faces_packed() )
-    src_mesh = Mesh( src_mesh.verts_packed(), src_mesh.faces_packed() )
-    tar_mesh = Mesh( tar_mesh.verts_packed(), tar_mesh.faces_packed() )
+    mesh = Mesh( mesh.verts_packed().detach().cpu().numpy(), mesh.faces_packed().detach().cpu().numpy() )
+    src_mesh = Mesh( src_mesh.verts_packed().detach().cpu().numpy(), src_mesh.faces_packed().detach().cpu().numpy() )
+    tar_mesh = Mesh( tar_mesh.verts_packed().detach().cpu().numpy(), tar_mesh.faces_packed().detach().cpu().numpy() )
 
     # verts_idx : 最も近い頂点番号
     verts_idx, _ = src_mesh.closest_vertices(mesh.v)
@@ -134,7 +134,7 @@ def repose_mesh( src_mesh, smpl, vert_indices, device = torch.device("cpu") ):
     return new_mesh
 
 
-def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None ):
+def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None, device = torch.device("cpu") ):
     """
     Laplacian deformation による衣装テンプレートメッシュの変形？
     重なっている領域を除去する？
@@ -147,7 +147,7 @@ def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None ):
         メッシュに対して Laplacian deformation での Laplacian を計算する
         """
         # pytorch3d -> psbody.mesh への変換
-        mesh = Mesh( mesh.verts_packed(), mesh.faces_packed() )
+        mesh = Mesh( mesh.verts_packed().detach().cpu().numpy(), mesh.faces_packed().detach().cpu().numpy() )
 
         # メッシュを頂点連結関係を取得？
         connectivity = get_vert_connectivity(mesh)
@@ -208,7 +208,7 @@ def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None ):
 
     eps = 0.001
     ww = 2.0
-    n_verts = mesh.num_verts_per_mesh()[0]
+    n_verts = mesh.num_verts_per_mesh()[0].detach().cpu().numpy()
 
     pentgt_points = nearest_points[indices] - mesh.verts_packed().detach().cpu().numpy()[indices]
     pentgt_points = nearest_points[indices] + eps * pentgt_points / np.expand_dims(0.0001 + np.linalg.norm(pentgt_points, axis=1), 1)
@@ -225,7 +225,7 @@ def remove_mesh_interpenetration( mesh, base_mesh, laplacian = None ):
     res = spsolve(A.T.dot(A), A.T.dot(b))
 
     # 
-    new_mesh = Meshes( torch.from_numpy(res).float().unsqueeze(0), mesh.faces_packed().unsqueeze(0) )
+    new_mesh = Meshes( torch.from_numpy(res).float().unsqueeze(0), mesh.faces_packed().unsqueeze(0) ).to(device)
     return new_mesh
 
 
