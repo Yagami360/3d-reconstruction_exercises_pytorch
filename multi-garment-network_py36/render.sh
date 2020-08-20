@@ -11,9 +11,11 @@ rm -rf tensorboard/${EXPER_NAME}
 
 python render.py \
     --exper_name ${EXPER_NAME} \
-    --smpl_registration_path datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl \
+    --smpl_registration_path datasets/smpl_registrations/basicModel_f_lbs_10_207_0_v1.0.0.pkl \
     --shader soft_silhouette_shader \
     --debug
+
+#    --smpl_registration_path datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl \
 
 if [ $1 = "poweroff" ] ; then
     sudo poweroff
