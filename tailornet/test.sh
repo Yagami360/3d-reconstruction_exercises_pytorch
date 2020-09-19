@@ -9,7 +9,7 @@ mkdir -p _logs
 EXPER_NAME=debug
 rm -rf tensorboard/${EXPER_NAME}
 
-python render.py \
+python test.py \
     --exper_name ${EXPER_NAME} \
     --cloth_type old-t-shirt --gender female \
     --smpl_registration_dir datasets/smpl_registrations \

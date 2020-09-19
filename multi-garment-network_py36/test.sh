@@ -9,7 +9,7 @@ mkdir -p _logs
 EXPER_NAME=debug
 rm -rf tensorboard/${EXPER_NAME}
 
-python render.py \
+python test.py \
     --exper_name ${EXPER_NAME} \
     --smpl_registration_path datasets/smpl_registrations/basicModel_f_lbs_10_207_0_v1.0.0.pkl \
     --shader soft_silhouette_shader \

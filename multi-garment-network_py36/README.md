@@ -1,5 +1,5 @@
 # multi-garment-network_py36
-論文「Multi-Garment Net: Learning to Dress 3D People from Images」の実装
+論文「Multi-Garment Net: Learning to Dress 3D People from Images」の実装<br>
 推論コードのみ
 
 - 参考コード

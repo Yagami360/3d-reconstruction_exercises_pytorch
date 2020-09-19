@@ -231,16 +231,24 @@ if __name__ == '__main__':
         new_lights.location = torch.tensor( [light_pos_x, light_pos_y, light_pos_z], device = device )[None]
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
+        mesh_img_tsr = renderer( mesh, cameras = cameras, lights = new_lights, materials = materials ).transpose(1,3).transpose(2,3)
         if( args.debug and step == 0 ):
             print( "min={}, max={}".format(torch.min(mesh_img_tsr), torch.max(mesh_img_tsr) ) )
 
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_light.png" ) )
+        # alpha belend
+        """
+        mesh_img_tsr[:,0,:,:] = mesh_img_tsr[:,0,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,1,:,:] = mesh_img_tsr[:,1,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,2,:,:] = mesh_img_tsr[:,2,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr = mesh_img_tsr[:,0:3,:,:]
+        mesh_img_tsr = torch.from_numpy( (mesh_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+        """
+
+        save_image( mesh_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_render_light.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_img_tsr ],
         ]
         board_add_images(board_train, 'render_light', visuals, step+1)
 
@@ -254,13 +262,21 @@ if __name__ == '__main__':
         new_cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_camera.png" ) )
+        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = materials ).transpose(1,3).transpose(2,3)
+
+        # alpha belend
+        """
+        mesh_img_tsr[:,0,:,:] = mesh_img_tsr[:,0,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,1,:,:] = mesh_img_tsr[:,1,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,2,:,:] = mesh_img_tsr[:,2,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr = mesh_img_tsr[:,0:3,:,:]
+        mesh_img_tsr = torch.from_numpy( (mesh_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+        """
+        save_image( mesh_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_render_camera.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_img_tsr ],
         ]
         board_add_images(board_train, 'render_camera', visuals, step+1)
 
@@ -278,13 +294,19 @@ if __name__ == '__main__':
         )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = new_materials )
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_render_materials.png" ) )
+        mesh_img_tsr = renderer( mesh, cameras = new_cameras, lights = lights, materials = new_materials ).transpose(1,3).transpose(2,3)
+        """
+        mesh_img_tsr[:,0,:,:] = mesh_img_tsr[:,0,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,1,:,:] = mesh_img_tsr[:,1,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr[:,2,:,:] = mesh_img_tsr[:,2,:,:] * mesh_img_tsr[:,-1,:,:]
+        mesh_img_tsr = mesh_img_tsr[:,0:3,:,:]
+        mesh_img_tsr = torch.from_numpy( (mesh_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+        """
+        save_image( mesh_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_render_materials.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_img_tsr ],
         ]
         board_add_images(board_train, 'render_materials', visuals, step+1)
 

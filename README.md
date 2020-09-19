@@ -21,8 +21,8 @@ DeepLearning を用いた 3D 再構成手法 [3D Reconstruction] の pytorch 実
 
 - SMPL 系
     - [smpl](https://github.com/Yagami360/3d-reconstruction_exercises_pytorch/tree/master/smpl)
-    - [tailornet](https://github.com/Yagami360/3d-reconstruction_exercises_pytorch/tree/master/tailornet)
     - [multi-garment-network_py36](https://github.com/Yagami360/3d-reconstruction_exercises_pytorch/tree/master/multi-garment-network_py36)
+    - [tailornet](https://github.com/Yagami360/3d-reconstruction_exercises_pytorch/tree/master/tailornet)
 - 3Dメッシュ操作
     - [free-form_deformation](https://github.com/Yagami360/3d-reconstruction_exercises_pytorch/tree/master/free-form_deformation)
 - PyTorch3D でのレンダリング処理

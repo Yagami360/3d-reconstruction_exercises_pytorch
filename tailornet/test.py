@@ -4,6 +4,7 @@ import numpy as np
 import random
 from tqdm import tqdm
 from PIL import Image
+import json
 
 # PyTorch
 import torch
@@ -21,7 +22,6 @@ from psbody.mesh import Mesh
 
 # PyTorch 3D
 import pytorch3d
-#from pytorch3d import _C
 from pytorch3d.io import load_obj, save_obj, load_objs_as_meshes
 from pytorch3d.structures import Meshes                                                 # メッシュ関連
 #from pytorch3d.structures import Textures                                               # テクスチャー関連
@@ -33,28 +33,29 @@ from pytorch3d.renderer.mesh.shader import SoftSilhouetteShader, SoftPhongShader
 from pytorch3d.renderer import MeshRenderer                                             # レンダラー関連
 
 # 自作モジュール
-from models.smpl import SMPLModel
-from models.smpl_mgn import SMPLMGNModel
+from data.tailornet_dataset import TailornetDataset
+from models.smpl_tailor import SMPLTailorModel
 from utils.utils import save_checkpoint, load_checkpoint
 from utils.utils import board_add_image, board_add_images, save_image_w_norm, save_plot3d_mesh_img, get_plot3d_mesh_img, save_mesh_obj
-from utils.mesh import deform_mesh_by_closest_vertices, repose_mesh, remove_mesh_interpenetration
+from utils.mesh import normalize_y_rotation
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exper_name", default="smpl_g+", help="実験名")
-    parser.add_argument("--smpl_registration_path", type=str, default="datasets/smpl_registrations/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl")
-    parser.add_argument("--digital_wardrobe_registration_path", type=str, default="datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/registration.pkl")
-    parser.add_argument("--digital_wardrobe_cloth_mesh_path", type=str, default="datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/TShirtNoCoat.obj")
-    parser.add_argument("--texture_path", type=str, default="datasets/digital_wardrobe/Multi-Garment_dataset/125611508622317/scan_tex.jpg")
-    parser.add_argument("--cloth_smpl_fts_path", type=str, default="datasets/assets/garment_fts.pkl")
+    parser.add_argument('--cloth_type', choices=['old-t-shirt', 't-shirt', 'pant'], default="old-t-shirt", help="服の種類")
+    parser.add_argument('--gender', choices=['female', 'male', 'neutral'], default="female", help="性別")
+    parser.add_argument("--smpl_registration_dir", type=str, default="datasets/smpl_registrations")
+    parser.add_argument("--tailornet_dataset_dir", type=str, default="datasets/tailornet_dataset")
+    parser.add_argument("--kernel_sigma", type=float, default=0.01 )
+    parser.add_argument("--texture_path", type=str, default="")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument('--save_checkpoints_dir', type=str, default="checkpoints", help="モデルの保存ディレクトリ")
-    parser.add_argument('--load_checkpoints_path', type=str, default="", help="モデルの読み込みファイルのパス")
+    parser.add_argument('--load_checkpoints_dir', type=str, default="checkpoints/tailornet", help="モデルの読み込みファイルのパス")
     parser.add_argument('--tensorboard_dir', type=str, default="tensorboard", help="TensorBoard のディレクトリ")
     parser.add_argument("--batch_size", type=int, default=1)
 
     parser.add_argument("--render_steps", type=int, default=100)
-    parser.add_argument("--window_size", type=int, default=512)
+    parser.add_argument("--window_size", type=int, default=256)
     parser.add_argument('--shader', choices=['soft_silhouette_shader', 'soft_phong_shader', 'textured_soft_phong_shader'], default="soft_silhouette_shader", help="shader の種類")
     parser.add_argument("--light_pos_x", type=float, default=0.0)
     parser.add_argument("--light_pos_y", type=float, default=0.0)
@@ -127,72 +128,74 @@ if __name__ == '__main__':
     #================================
     # データセットの読み込み
     #================================
-    # SMPL の読み込み
-    smpl = SMPLMGNModel( 
-        registration_path = args.smpl_registration_path, 
-        digital_wardrobe_registration_path = args.digital_wardrobe_registration_path, 
-        cloth_smpl_fts_path = args.cloth_smpl_fts_path,
-        batch_size = args.batch_size, device = device, debug = args.debug
+    pass
+
+    #================================
+    # モデルの生成
+    #================================
+    # SMPL
+    smpl = SMPLTailorModel( 
+        smpl_registration_dir = args.smpl_registration_dir, 
+        tailornet_dataset_dir = args.tailornet_dataset_dir,
+        load_checkpoints_dir = args.load_checkpoints_dir,
+        cloth_type = args.cloth_type, 
+        gender = args.gender,
+        batch_size = args.batch_size, 
+        kernel_sigma = args.kernel_sigma,
+        device = device, 
+        debug = args.debug
     )
-
-    # digital wardrobe にある服テンプレートメッシュを読み込み
-    mesh_cloth = load_objs_as_meshes( [args.digital_wardrobe_cloth_mesh_path], device = device )
-    print( "[mesh_cloth] num_verts={}, num_faces={}".format(mesh_cloth.num_verts_per_mesh(),mesh_cloth.num_faces_per_mesh()) )
-    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth.obj" ) )
+    print( "smpl : ", smpl )
 
     #================================
-    # メッシュの生成
+    # SMPL でのメッシュ生成
     #================================
-    # SMPL を用いた初期Tポーズでの人体メッシュ生成
-    betas_init = torch.zeros( (args.batch_size, 10), requires_grad=False).float().to(device)
-    thetas_init = torch.zeros( (args.batch_size, 72), requires_grad=False).float().to(device)
-    trans_init = torch.from_numpy(np.zeros((args.batch_size, 3))).float().requires_grad_(False).to(device)
-    verts_init, faces_init, joints_init = smpl( betas = betas_init, thetas = thetas_init, trans = trans_init )
-    mesh_body_init = Meshes(verts_init, faces_init).to(device)
-    print( "[mesh_body_init] num_verts={}, num_faces={}".format(mesh_body_init.num_verts_per_mesh(),mesh_body_init.num_faces_per_mesh()) )
-    if( args.shader == "soft_phong_shader" ):
-        # メッシュのテクスチャー設定
-        from pytorch3d.structures import Textures
-        verts_rgb_colors = torch.ones([1, mesh_body_init.num_verts_per_mesh().item(), 3]).to(device) * 0.9   # 頂点カラーを設定
-        texture = Textures(verts_rgb=verts_rgb_colors)                                                       # 頂点カラーのテクスチャー生成
-        mesh_body_init.textures = texture                                                                    # メッシュにテクスチャーを設定
-    elif( args.shader == "textured_soft_phong_shader" ):
-        #from pytorch3d.structures import Textures
-        #texture_img = Image.open(args.texture_path)
-        #mesh_body_init.textures = Textures(maps=texture_img)
-        NotImplementedError()
+    # SMPL 制御パラメータ β,θ の初期化
+    betas = torch.from_numpy( np.zeros((args.batch_size,10)) ).float().requires_grad_(False).to(device)
+    for b in range(betas.shape[0]):
+        betas[b][0] = 2.0
+        betas[b][1] = 2.0
+    
+    thetas = torch.from_numpy( np.zeros((args.batch_size,72)) ).float().requires_grad_(False).to(device)
+    thetas_file_path = os.path.join(args.tailornet_dataset_dir, "some_thetas.npy")
+    if( os.path.exists(thetas_file_path) ):
+        which = 0
+        for b in range(thetas.shape[0]):
+            thetas[b] = torch.from_numpy( normalize_y_rotation(np.load(thetas_file_path)[which]) ).float().requires_grad_(False).to(device)
+        
+    gammas = torch.from_numpy( np.zeros((args.batch_size,4) ) ).float().requires_grad_(False).to(device)
+    for b in range(gammas.shape[0]):
+        gammas[b][0] = 1.5
+        gammas[b][1] = 0.5
+        gammas[b][2] = 1.5
+        gammas[b][3] = 0.0        
 
-    save_mesh_obj( verts_init[0], faces_init[0], os.path.join(args.results_dir, args.exper_name, "mesh_body_init.obj" ) )
+    print( "betas.shape : ", betas.shape )
+    print( "thetas.shape : ", thetas.shape )
+    print( "gammas.shape : ", gammas.shape )
+    #print( "[thetas] sum={}".format(torch.sum(thetas)) )    # sum=-0.30397236347198486
+    #print( "[betas] sum={}".format(torch.sum(betas)) )      # sum=4.0
+    #print( "[gammas] sum={}".format(torch.sum(gammas)) )    # sum=1.5
+    #print( "betas : ", betas )
+    #print( "thetas : ", thetas )
+    #print( "gammas : ", gammas )
 
-    # SMPL を用いた制御パラメータ β,θ を変えた場合の人体メッシュ生成
-    betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
-    thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
-    verts, faces, joints = smpl( betas, thetas )
-    mesh_body = Meshes(verts, faces).to(device)
+    # SMPL でのメッシュ生成
+    mesh_body, mesh_cloth = smpl( betas = betas, thetas = thetas, gammas = gammas )
     print( "[mesh_body] num_verts={}, num_faces={}".format(mesh_body.num_verts_per_mesh(),mesh_body.num_faces_per_mesh()) )
+    print( "[mesh_cloth] num_verts={}, num_faces={}".format(mesh_cloth.num_verts_per_mesh(),mesh_cloth.num_faces_per_mesh()) )
     if( args.shader == "soft_phong_shader" ):
         from pytorch3d.structures import Textures
         verts_rgb_colors = torch.ones([1, mesh_body.num_verts_per_mesh().item(), 3]).to(device) * 0.9
         texture = Textures(verts_rgb=verts_rgb_colors)
         mesh_body.textures = texture
 
-    save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_body.obj" ) )
+        verts_rgb_colors = torch.ones([1, mesh_cloth.num_verts_per_mesh().item(), 3]).to(device) * 0.9
+        texture = Textures(verts_rgb=verts_rgb_colors)
+        mesh_cloth.textures = texture
 
-    # 服テンプレートメッシュを制御パラメータ β,θ を変えた場合の人体メッシュの形状に変形する / Re-target
-    mesh_cloth_retarget = deform_mesh_by_closest_vertices( mesh_cloth, mesh_body_init, mesh_body )
-    save_mesh_obj( mesh_cloth_retarget.verts_packed(), mesh_cloth_retarget.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_retarget.obj" ) )
-
-    # 衣装テンプレートメッシュの対応する SMPL 体型メッシュへの頂点変形 D を論文中の (3) 式で計算し、服メッシュを変形する？ / Re-pose
-    mesh_cloth_repose = repose_mesh( mesh_cloth_retarget, smpl, smpl.vert_indices )
-    save_mesh_obj( mesh_cloth_repose.verts_packed(), mesh_cloth_repose.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_repose.obj" ) )
-
-    # ? / Re-pose
-    mesh_body_repose = repose_mesh( mesh_body, smpl, range(mesh_body.num_verts_per_mesh()) )
-    save_mesh_obj( mesh_body_repose.verts_packed(), mesh_body_repose.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_body_repose.obj" ) )
-
-    # Laplacian deformation による衣装テンプレートメッシュの変形
-    mesh_cloth_interp = remove_mesh_interpenetration(mesh_cloth_repose, mesh_body_repose, device = device )
-    save_mesh_obj( mesh_cloth_interp.verts_packed(), mesh_cloth_interp.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_interp.obj" ) )
+    save_mesh_obj( mesh_body.verts_packed(), mesh_body.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_body.obj" ) )
+    save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth.obj" ) )
 
     #================================
     # レンダリングパイプラインの構成
@@ -259,16 +262,29 @@ if __name__ == '__main__':
         new_cameras = OpenGLPerspectiveCameras( device = device, R = rot_matrix, T = trans_matrix )
 
         # メッシュのレンダリング
-        mesh_img_tsr = renderer( mesh_body, cameras = new_cameras, lights = lights, materials = materials )            
-        mesh_img_tsr = mesh_img_tsr * 2.0 - 1.0
-        if( args.debug and step == 0 ):
-            print( "min={}, max={}".format(torch.min(mesh_img_tsr), torch.max(mesh_img_tsr) ) )
+        mesh_body_img_tsr = renderer( mesh_body, cameras = new_cameras, lights = lights, materials = materials ).transpose(1,3).transpose(2,3)
+        mesh_body_img_tsr[:,0,:,:] = mesh_body_img_tsr[:,0,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr[:,1,:,:] = mesh_body_img_tsr[:,1,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr[:,2,:,:] = mesh_body_img_tsr[:,2,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr = mesh_body_img_tsr[:,0:3,:,:]
+        mesh_body_img_tsr = torch.from_numpy( (mesh_body_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
 
-        save_image( mesh_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_camera.png" ) )
+        mesh_cloth_img_tsr = renderer( mesh_cloth, cameras = new_cameras, lights = lights, materials = materials ).transpose(1,3).transpose(2,3)
+        mesh_cloth_img_tsr[:,0,:,:] = mesh_cloth_img_tsr[:,0,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr[:,1,:,:] = mesh_cloth_img_tsr[:,1,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr[:,2,:,:] = mesh_cloth_img_tsr[:,2,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr = mesh_cloth_img_tsr[:,0:3,:,:]
+        mesh_cloth_img_tsr = torch.from_numpy( (mesh_cloth_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+        if( args.debug and step == 0 ):
+            print( "[mesh_body_img_tsr] min={}, max={}".format(torch.min(mesh_body_img_tsr), torch.max(mesh_body_img_tsr) ) )
+            print( "[mesh_cloth_img_tsr] min={}, max={}".format(torch.min(mesh_cloth_img_tsr), torch.max(mesh_cloth_img_tsr) ) )
+
+        save_image( mesh_body_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_body_camera.png" ) )
+        save_image( mesh_cloth_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_cloth_camera.png" ) )
 
         # visual images
         visuals = [
-            [ mesh_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_body_img_tsr, mesh_cloth_img_tsr ],
         ]
         board_add_images(board_train, 'render_camera', visuals, step+1)
 
@@ -277,34 +293,30 @@ if __name__ == '__main__':
         #-------------------------------------------------
         new_betas = torch.from_numpy( (np.random.rand(args.batch_size, 10) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
         print( "new_betas : ", new_betas )
-        verts, faces, joints = smpl( new_betas, thetas )
-        mesh_body = Meshes(verts, faces)
-        mesh_body_img_tsr = renderer( mesh_body, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
-        save_image( mesh_body_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_beta_step{}.png".format(step) ) )
-        save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_beta_step{}.obj".format(step) ) )
+        mesh_body, mesh_cloth = smpl( betas = betas, thetas = thetas, gammas = gammas )
+
+        # メッシュのレンダリング
+        mesh_body_img_tsr = renderer( mesh_body, cameras = cameras, lights = lights, materials = materials ).transpose(1,3).transpose(2,3)
+        mesh_body_img_tsr[:,0,:,:] = mesh_body_img_tsr[:,0,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr[:,1,:,:] = mesh_body_img_tsr[:,1,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr[:,2,:,:] = mesh_body_img_tsr[:,2,:,:] * mesh_body_img_tsr[:,-1,:,:]
+        mesh_body_img_tsr = mesh_body_img_tsr[:,0:3,:,:]
+        mesh_body_img_tsr = torch.from_numpy( (mesh_body_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+
+        mesh_cloth_img_tsr = renderer( mesh_cloth, cameras = new_cameras, lights = lights, materials = materials ).transpose(1,3).transpose(2,3)
+        mesh_cloth_img_tsr[:,0,:,:] = mesh_cloth_img_tsr[:,0,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr[:,1,:,:] = mesh_cloth_img_tsr[:,1,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr[:,2,:,:] = mesh_cloth_img_tsr[:,2,:,:] * mesh_cloth_img_tsr[:,-1,:,:]
+        mesh_cloth_img_tsr = mesh_cloth_img_tsr[:,0:3,:,:]
+        mesh_cloth_img_tsr = torch.from_numpy( (mesh_cloth_img_tsr.detach().cpu().numpy() > 0).astype(np.float32) * 2.0 ).to(device) - 1.0
+
+        save_image( mesh_body_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_body_beta.png" ) )
+        save_image( mesh_cloth_img_tsr, os.path.join(args.results_dir, args.exper_name, "mesh_cloth_beta.png" ) )
+        save_mesh_obj( mesh_body.verts_packed(), mesh_body.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_body_beta_step{}.obj".format(step) ) )
+        save_mesh_obj( mesh_cloth.verts_packed(), mesh_cloth.faces_packed(), os.path.join(args.results_dir, args.exper_name, "mesh_cloth_beta_step{}.obj".format(step) ) )
 
         # visual images
-        mesh_body_init_img_tsr = renderer( mesh_body_init, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
         visuals = [
-            [ mesh_body_init_img_tsr.transpose(1,3).transpose(2,3), mesh_body_img_tsr.transpose(1,3).transpose(2,3) ],
+            [ mesh_body_img_tsr, mesh_cloth_img_tsr ],
         ]
         board_add_images(board_train, 'render_beta', visuals, step+1)
-
-        #-----------------------------
-        # SMPL 制御パラメータ theta 変更＆再レンダリング
-        #-----------------------------
-        new_thetas = torch.from_numpy( (np.random.rand(args.batch_size, 72) - 0.5) * 0.06 ).float().requires_grad_(False).to(device)
-        print( "new_thetas : ", new_thetas )
-        verts, faces, joints = smpl( betas, new_thetas )
-        mesh_body = Meshes(verts, faces)
-
-        mesh_body_img_tsr = renderer( mesh_body, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
-        save_image( mesh_body_img_tsr.transpose(1,3).transpose(2,3), os.path.join(args.results_dir, args.exper_name, "mesh_theta_step{}.png".format(step) ) )
-        save_mesh_obj( verts[0], faces[0], os.path.join(args.results_dir, args.exper_name, "mesh_theta_step{}.obj".format(step) ) )
-
-        # visual images
-        mesh_body_init_img_tsr = renderer( mesh_body_init, cameras = cameras, lights = lights, materials = materials ) * 2.0 - 1.0
-        visuals = [
-            [ mesh_body_init_img_tsr.transpose(1,3).transpose(2,3), mesh_body_img_tsr.transpose(1,3).transpose(2,3) ],
-        ]
-        board_add_images(board_train, 'render_theta', visuals, step+1)
